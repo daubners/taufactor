@@ -14,12 +14,14 @@ def volume_fraction(img, phases={}):
         img = torch.tensor(img)
 
     if phases=={}:
-        phases = torch.unique(img)
-        vf_out = []
-        for p in phases:
-            vf_out.append((img==p).to(torch.float).mean().item())
-        if len(vf_out)==1:
-            vf_out=vf_out[0]
+        volume = torch.numel(img)
+        labels, counts = torch.unique(img, return_counts=True)
+        labels = labels.int()
+        counts = counts.float()
+        counts /= volume
+        vf_out = {}
+        for i, label in enumerate(labels):
+            vf_out[str(label.item())] = counts[i].item()
     else:
         vf_out={}
         for p in phases:
