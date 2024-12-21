@@ -79,19 +79,19 @@ def gaussian_kernel_3d_numpy(size=3, sigma=1.0):
     kernel /= np.sum(kernel)
     return kernel
 
-def specific_surface_area(img, spacing, phases={}, method='gradient', device=torch.device('cuda'), smoothing=True):
+def specific_surface_area(img, spacing=(1,1,1), phases={}, method='gradient', device=torch.device('cuda'), smoothing=True):
     """
     Calculate the specific surface area of all (specified) phases
     :param img: labelled microstructure where each integer value represents a phase
     :param spacing: voxel size in each dimension [dx,dy,dz]
     :param phases: dictionary of phases {'name': label, ...}. If empty do all by default.
-    :param periodic: list of bools indicating if the image is periodic in each dimension
-    :return: the surface area in faces per unit volume
+    :param method: string to indicate preferred method (face_counting, marching_cubes or gradient)
+    :return: the surface area per unit volume
     """
     [dx,dy,dz] = spacing
     surface_areas = {}
 
-    if (method == 'gradient') | (method == 'faces'):
+    if (method == 'gradient') | (method == 'face_counting'):
         if type(img) is not type(torch.tensor(1)):
             tensor = torch.tensor(img)
         else:
@@ -122,7 +122,7 @@ def specific_surface_area(img, spacing, phases={}, method='gradient', device=tor
 
             surface_areas[name] = surface_area / volume
 
-    elif method == 'faces':
+    elif method == 'face_counting':
         tensor = tensor.to(torch.int32)
 
         # TODO: treat dimensions such that dx!=dz is accounted for
@@ -158,7 +158,7 @@ def specific_surface_area(img, spacing, phases={}, method='gradient', device=tor
                 count = torch.sum((phasepairs == label).int()).item()
                 surface_areas[name] = count / volume
 
-    elif method == 'marching':
+    elif method == 'marching_cubes':
         if device != 'cpu':
             warnings.warn("The marching cubes algorithm is performed on the CPU based on scikit-image package.")
         if dx != dy | dx!= dz | dy!=dz:
@@ -185,7 +185,7 @@ def specific_surface_area(img, spacing, phases={}, method='gradient', device=tor
             surface_areas[name] = surface_area/volume
 
     else:
-        raise ValueError("Choose method\n 'gradient' for fast phase-field approach\n 'faces' for face counting or\n 'marching' for marching cubes method.")
+        raise ValueError("Choose method\n 'gradient' for fast phase-field approach\n 'face_counting' for face counting or\n 'marching_cubes' for marching cubes method.")
 
     return surface_areas
 
