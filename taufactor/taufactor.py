@@ -88,8 +88,8 @@ class BaseSolver:
         vert_flux = self.calc_vertical_flux()
         fl = torch.sum(vert_flux, (0, 2, 3))
         err = (fl.max() - fl.min())/(fl.max())
-        if fl.min() == 0:
-            return 'zero_flux', torch.mean(fl), err
+        # if fl.min() == 0:
+        #     return 'zero_flux', torch.mean(fl), err
         if err < conv_crit or torch.isnan(err).item():
             return True, torch.mean(fl), err
         return False, torch.mean(fl), err
