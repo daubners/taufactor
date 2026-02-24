@@ -59,7 +59,6 @@ def test_volume_fraction_on_multi_cubes():
     assert (vf['1'], vf['2'], vf['3'], sum) == (0.125, 0.125, 0.0625, 1.0)
 
 # Surface area
-
 def test_surface_area_on_uniform_block():
     """Run surface area on uniform block"""
     N = 20
@@ -115,9 +114,9 @@ def test_surface_area_on_sphere():
 
     # Relative errors should be
     # - face_counting: 52.01 %,
-    # - marching_cubes: 0.82 %,
-    # - gradient:       0.95 %
-    assert (np.around(sa_f, 2), np.around(sa_m, 2), np.around(sa_g, 2)) == (52.01, 0.82, 0.95)
+    # - marching_cubes: 0.01 %,
+    # - gradient:       1.25 %
+    assert (np.around(sa_f, 2), np.around(sa_m, 2), np.around(sa_g, 2)) == (52.01, 0.01, 1.25)
 
 
 def test_surface_area_on_multi_cubes():

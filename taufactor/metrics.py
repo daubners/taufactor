@@ -112,7 +112,7 @@ def _crop_area_of_interest_numpy(array, labels):
     return sub_array
 
 
-def _gaussian_kernel_3d_torch(device, size=3, sigma=1.0):
+def _gaussian_kernel_3d_torch(size=3, sigma=1.0, device='cuda'):
     """Create normalized 3D Gaussian kernel using PyTorch"""
     ax = torch.linspace(-(size // 2), size // 2, size)
     xx, yy, zz = torch.meshgrid(ax, ax, ax, indexing="ij")
@@ -143,6 +143,7 @@ def specific_surface_area(
     periodic = [False,False,False],
     device = 'cuda',
     smoothing = True,
+    sigma = 0.8,
     verbose = False
 ):
     """Compute specific surface area per phase.
@@ -205,7 +206,7 @@ def specific_surface_area(
             labels = torch.unique(tensor)
             labels = labels.int()
             phases = {str(label.item()): label.item() for label in labels}
-        gaussian = _gaussian_kernel_3d_torch(device)
+        gaussian = _gaussian_kernel_3d_torch(size=3, sigma=sigma, device=device)
 
         volume = torch.numel(tensor)
         for name, label in phases.items():
@@ -214,7 +215,7 @@ def specific_surface_area(
             mask = (sub_tensor == label).float()
             if smoothing:
                 mask = mask.unsqueeze(0).unsqueeze(0)
-                mask = F.pad(mask, (1,1,1,1,1,1), mode='reflect')
+                mask = F.pad(mask, (1,1,1,1,1,1), mode='replicate')
                 mask = F.conv3d(mask, gaussian, padding='valid')
                 mask = mask.squeeze()
 
@@ -272,7 +273,7 @@ def specific_surface_area(
             phases = {str(label): label for label in labels}
 
         volume = array.size*dx
-        gaussian = _gaussian_kernel_3d_numpy(size=3, sigma=1.0)
+        gaussian = _gaussian_kernel_3d_numpy(size=3, sigma=sigma)
         for name, label in phases.items():
             sub_array = _crop_area_of_interest_numpy(array, label)
             sub_array = (sub_array == label).astype(float)
