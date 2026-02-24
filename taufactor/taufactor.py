@@ -61,7 +61,7 @@ class SORSolver(ABC):
 
         # Init params
         self.converged = False
-        self.old_tau = -1
+        self.old_tau = 0
         self.iter = 0
         self.tau = None
         self.tau_x = None
@@ -185,7 +185,8 @@ class SORSolver(ABC):
                 if self.iter % 100 == 0:
                     self.converged = self.check_convergence(verbose, conv_crit, plot_interval)
 
-            self._end_simulation(self.iter, verbose, start)
+            self.walltime = timer() - start
+            self._end_simulation(self.iter, verbose)
             if self.tau_x is None:
                 return self.tau
             return self.tau_x
@@ -265,15 +266,17 @@ class SORSolver(ABC):
                 sum += torch.roll(tensor, dr, dim)
         return sum
 
-    def _end_simulation(self, iterations: int, verbose: bool, start):
+    def _end_simulation(self, iterations: int, verbose: bool):
         if self.converged:
-            msg = 'converged to'
+            msg = "converged to"
         else:
-            print('Warning: not converged')
-            msg = 'unconverged value of tau'
+            print("Warning: not converged")
+            msg = "unconverged value of tau"
 
         if verbose:
-            print(f'{msg}: {self.tau} after: {iterations} iterations in: {np.around(timer() - start, 4)} s ({np.around((timer() - start)/(iterations), 4)} s/iter)')
+            print(f"{msg}: {self.tau} after: {iterations} iterations in: "
+                  f"{np.around(self.walltime, 4)} s "
+                  f"({np.around(self.walltime/iterations, 4)} s/iter)")
             if self.device.type == 'cuda':
                 print(f"GPU-RAM currently {torch.cuda.memory_allocated(device=self.device) / 1e6:.2f} MB "
                       f"(max allocated {torch.cuda.max_memory_allocated(device=self.device) / 1e6:.2f} MB; "
@@ -382,7 +385,7 @@ class Solver(SORSolver):
             out=np.full_like(fluxes_1d, np.nan), where=fluxes != 0)
 
         for b in range(self.batch_size):
-            if (fl_min[b] == 0) or (mean_fl[b] == 0):
+            if (fl_min[b] == 0) or (fl_max[b] == 0) or (mean_fl[b] == 0):
                 _ , frac = extract_through_feature(self.cpu_img[b]>0, 1, 'x')
                 if frac == 0:
                     print(f"Warning: batch element {b} has no percolating path!")
@@ -638,7 +641,7 @@ class MultiPhaseSolver(SORSolver):
                         where=self.D_eff != 0)
       
         for b in range(self.batch_size):
-            if (fl_min[b] == 0) or (mean_fl[b] == 0):
+            if (fl_min[b] == 0) or (fl_max[b] == 0) or (mean_fl[b] == 0):
                 _ , frac = extract_through_feature(self.cpu_img[b]>0, 1, 'x')
                 if frac == 0:
                     print(f"Warning: batch element {b} has no percolating path!")
