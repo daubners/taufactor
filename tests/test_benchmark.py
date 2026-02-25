@@ -33,9 +33,11 @@ def test_run_benchmark_study_blocks_string_and_hook_match():
         return create_stacked_blocks(N)
 
     res1 = run_benchmark_study(
-        Ns=[16], solver="Solver", structure="blocks", write_file=False,
+        Ns=[16], solver="Solver", structure="blocks",
+        write_file=False, devices=['cpu']
     )
     res2 = run_benchmark_study(
-        Ns=[16], solver="Solver", structure=structure_fn, write_file=False,
+        Ns=[16], solver="Solver", structure=structure_fn,
+        write_file=False, devices=['cpu']
     )
     assert np.isclose(res1[0]["taufactor"], res2[0]["taufactor"])
