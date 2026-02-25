@@ -204,6 +204,48 @@ def test_mphsolver_matches_solver_for_binary_case():
     s_mp.solve(iter_limit=1000)
     assert np.isclose(float(np.asarray(s_bin.tau)[0]), float(np.asarray(s_mp.tau)[0]), atol=1e-3)
 
+def test_mphsolver_supports_batched_inputs():
+    """Batched multiphase solve should match per-sample results."""
+    N = 16
+    img_a = np.ones((N, N, N))
+    img_b = np.ones((N, N, N))
+    img_b[:, :, : N // 2] = 2
+    imgs = np.stack([img_a, img_b], axis=0)
+
+    Ds = {0: 0.0, 1: 1.0, 2: 0.5}
+    s_batch = tau.MultiPhaseSolver(imgs, Ds, device='cpu')
+    s_batch.solve(iter_limit=1000)
+
+    s_a = tau.MultiPhaseSolver(img_a, Ds, device='cpu')
+    s_a.solve(iter_limit=1000)
+    s_b = tau.MultiPhaseSolver(img_b, Ds, device='cpu')
+    s_b.solve(iter_limit=1000)
+
+    assert np.allclose(np.asarray(s_batch.tau), np.array([s_a.tau[0], s_b.tau[0]]), atol=1e-3)
+
+def test_periodic_mphsolver_on_uniform_block():
+    """Periodic multiphase solver should return tau=1 on a uniform conductive block."""
+    N = 20
+    img = np.ones((N, N, N))
+    s = tau.PeriodicMultiPhaseSolver(img, {1: 1.0}, device='cpu')
+    s.solve(iter_limit=1000)
+    assert np.around(s.tau, 4) == 1.0
+
+def test_periodic_mphsolver_matches_periodic_solver_for_binary_case():
+    """Binary limit of periodic multiphase should match PeriodicSolver."""
+    N = 20
+    img = np.zeros((N, N + 1, N + 1))
+    for i in range(N):
+        img[i, i:i + 2, i:i + 2] = 1
+
+    s_bin = tau.PeriodicSolver(img, device='cpu')
+    s_bin.solve(iter_limit=1000)
+
+    s_mp = tau.PeriodicMultiPhaseSolver(img, {0: 0.0, 1: 1.0}, device='cpu')
+    s_mp.solve(iter_limit=1000)
+
+    assert np.isclose(float(np.asarray(s_bin.tau)[0]), float(np.asarray(s_mp.tau)[0]), atol=1e-3)
+
 
 ###  Testing the tau_e solver
 def test_taue_deadend():

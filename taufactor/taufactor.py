@@ -268,6 +268,7 @@ class SORSolver(ABC):
                       f"(max allocated {torch.cuda.max_memory_allocated(device=self.device) / 1e6:.2f} MB; "
                       f"{torch.cuda.max_memory_reserved(device=self.device) / 1e6:.2f} MB reserved)")
 
+
 class ThroughTransportSolver(SORSolver):
     """Solver for through-transport with open boundaries in x direction.
 
@@ -505,12 +506,11 @@ class PeriodicSolver(Solver):
 
 
 class MultiPhaseSolver(ThroughTransportSolver):
-    """Multi-phase SOR solver with per-phase conductivities/diffusivities.
+    """Multi-phase SOR solver with per-phase conductivity/diffusivity.
 
-    Supports multiple labels with user-defined conductivities and uses
+    Supports multiple labels with user-defined diffusivities and uses
     harmonic-mean pair weights in the update stencil. Labels omitted from
-    ``cond`` are treated as non-conductive with a warning. Currently
-    implemented for batch size of 1.
+    ``diffusivities`` are treated as isolating with a warning.
 
     Args:
         img (numpy.ndarray): Labeled image.
@@ -518,21 +518,18 @@ class MultiPhaseSolver(ThroughTransportSolver):
             Diffusivity can be zero for any label (including label 0).
             Labels not provided are assumed isolating.
             Defaults to ``{1: 1}``.
-        bc (tuple[float, float], optional): Boundary values.
-            Defaults to ``(-0.5, 0.5)``.
         device (str | torch.device, optional): Compute device. Defaults to ``'cuda'``.
 
     Attributes:
         diffusivities (dict[int, float]): Internal map of label to diffusivity.
         pre_factors (list[torch.Tensor]): Directional pre-factors for the stencil.
-        VF (dict[int, float]): Volume fraction per label.
-        D_mean (float): Phase-weighted mean diffusivity.
+        VF (dict[int, numpy.ndarray]): Volume fraction per label and batch.
+        D_mean (numpy.ndarray): Phase-weighted mean diffusivity per batch.
         D_eff (torch.Tensor | float | None): Effective diffusivity.
         tau (torch.Tensor | float | None): Tortuosity.
 
     Raises:
         ValueError: If any diffusivity is negative or non-finite.
-        TypeError: If batch size is greater than 1.
     """
 
     def __init__(self, img, diffusivities=None, D_scaling=1, omega=None, device='cuda'):
@@ -564,12 +561,12 @@ class MultiPhaseSolver(ThroughTransportSolver):
 
         # Boundary conditions
         super().__init__(img, omega=omega, device=device)
-        if self.batch_size > 1:
-            raise TypeError('Error: The MultiPhaseSolver is only implemented for batch_size=1!')
-
-        VF = {int(p): np.mean(self.cpu_img == p) for p in np.unique(self.cpu_img)}
+        self.VF = {
+            int(p): np.mean(self.cpu_img == p, axis=(1, 2, 3))
+            for p in np.unique(self.cpu_img)
+        }
         self.D_0 = D_scaling
-        self.D_mean = np.sum([VF[z] * self.Ds.get(z, 0.0) for z in VF])
+        self.D_mean = np.sum([self.VF[z] * self.Ds.get(z, 0.0) for z in self.VF], axis=0)
 
     def return_mask(self, img):
         if len(self.conductive_labels) == 0:
@@ -586,10 +583,10 @@ class MultiPhaseSolver(ThroughTransportSolver):
         return hm
 
     def init_conductive_neighbours(self, img):
-        # diffusivity map
         diff_map = torch.zeros_like(img)
         for phase, D_p in self.Ds.items():
             diff_map[img == phase] = D_p
+
         diff_map = self._pad(diff_map)
         diff_map[:, 0] = diff_map[:, 1]
         diff_map[:, -1] = diff_map[:, -2]
@@ -621,3 +618,39 @@ class MultiPhaseSolver(ThroughTransportSolver):
                     (self.field[:, 2:-1, 1:-1, 1:-1] - \
                      self.field[:, 1:-2, 1:-1, 1:-1])
         return vert_flux
+
+
+class PeriodicMultiPhaseSolver(MultiPhaseSolver):
+    """Multi-phase solver with periodic boundary conditions in y and z."""
+
+    def init_conductive_neighbours(self, img):
+        diff_map = torch.zeros_like(img)
+        for phase, D_p in self.Ds.items():
+            diff_map[img == phase] = D_p
+
+        diff_map = self._pad(diff_map)
+        # Dirichlet in x direction, periodic in y and z
+        diff_map[:, 0]  = diff_map[:, 1]
+        diff_map[:, -1] = diff_map[:, -2]
+        diff_map[:, :, 0, :] = diff_map[:, :, -2, :]
+        diff_map[:, :, -1, :] = diff_map[:, :, 1, :]
+        diff_map[:, :, :, 0] = diff_map[:, :, :, -2]
+        diff_map[:, :, :, -1] = diff_map[:, :, :, 1]
+
+        self.D_x = self._harmonic_mean(diff_map[:, :-1, 1:-1, 1:-1], diff_map[:, 1:, 1:-1, 1:-1])
+        self.D_y = self._harmonic_mean(diff_map[:, 1:-1, :-1, 1:-1], diff_map[:, 1:-1, 1:, 1:-1])
+        self.D_z = self._harmonic_mean(diff_map[:, 1:-1, 1:-1, :-1], diff_map[:, 1:-1, 1:-1, 1:])
+
+        factor = self.D_x[:, :-1, :, :] + self.D_x[:, 1:, :, :] + \
+                 self.D_y[:, :, :-1, :] + self.D_y[:, :, 1:, :] + \
+                 self.D_z[:, :, :, :-1] + self.D_z[:, :, :, 1:]
+        factor[:, 0]  += self.D_x[:, 0, :, :]
+        factor[:, -1] += self.D_x[:, -1, :, :]
+        factor[factor == 0] = torch.inf
+        return factor
+
+    def apply_boundary_conditions(self):
+        self.field[:, :, 0, :] = self.field[:, :, -2, :]
+        self.field[:, :, -1, :] = self.field[:, :, 1, :]
+        self.field[:, :, :, 0] = self.field[:, :, :, -2]
+        self.field[:, :, :, -1] = self.field[:, :, :, 1]
