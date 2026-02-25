@@ -177,7 +177,7 @@ def create_stacked_blocks(Nx, features=1):
     x, y, z = np.ogrid[:Nx, :Nx, :Nx]
     half_block_shift = feature_size // 2
     shift = ((x // feature_size) % 2) * half_block_shift
-    pattern = (((y + shift) // feature_size) + ((z + shift) // feature_size)) % 2
+    pattern = (((y + shift) // feature_size) + ((z - shift) // feature_size)) % 2
     return pattern.astype(int)
 
 def create_2d_diagonals(Nx, features=1):

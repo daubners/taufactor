@@ -150,8 +150,8 @@ def test_mphsolver_on_strip_of_ones_and_twos():
     x = 10
     img[:, 0:x, 0:x] = 1
     img[:, 0:x, x:N] = 2
-    cond = {1: 1, 2: 0.5}
-    S = tau.MultiPhaseSolver(img, cond, device='cpu')
+    Ds = {0: 0, 1: 1, 2: 0.5}
+    S = tau.MultiPhaseSolver(img, Ds, device='cpu')
     S.solve()
     assert np.around(S.tau, 4) == 1
 
@@ -162,10 +162,47 @@ def test_mphsolver_on_strip_of_ones_and_twos_and_threes():
     x = 10
     img[:, 0:x, 0:x] = 2
     img[:, 0:x, x:N] = 3
-    cond = {1: 1, 2: 0.5, 3: 2}
-    S = tau.MultiPhaseSolver(img, cond, device='cpu')
+    Ds = {0: 0, 1: 1, 2: 0.5, 3: 2}
+    S = tau.MultiPhaseSolver(img, Ds, device='cpu')
     S.solve()
     assert np.around(S.tau, 4) == 1
+
+def test_mphsolver_warns_on_missing_diffusivities():
+    """Missing phase labels in diffusivities should be assumed isolating with warning."""
+    N = 10
+    img = np.zeros([N, N, N])
+    img[:, :, : N // 2] = 1
+    img[:, :, N // 2 :] = 2
+    with pytest.warns(UserWarning, match="assuming these phases are isolating."):
+        s = tau.MultiPhaseSolver(img, {1: 1.0}, device='cpu')
+    assert s.Ds[2] == 0.0
+
+def test_mphsolver_allows_zero_Ds_and_label_zero_conductive():
+    """Label 0 may be conductive and other labels may explicitly be zero conductivity."""
+    N = 20
+    img = np.zeros((N, N, N))
+    img[:, :2] = 1  # explicit non-conductive slab with cond=0
+    s = tau.MultiPhaseSolver(img, {0: 1.0, 1: 0.0}, device='cpu')
+    s.solve(iter_limit=1000)
+    assert np.around(s.tau, 4) == 1
+
+def test_mphsolver_rejects_negative_conductivity():
+    """Negative conductivity should raise."""
+    img = np.zeros([6, 6, 6])
+    with pytest.raises(ValueError):
+        tau.MultiPhaseSolver(img, {0: 1.0, 1: -0.1}, device='cpu')
+
+def test_mphsolver_matches_solver_for_binary_case():
+    """cond={1:1} should match Solver on a binary structure."""
+    N = 20
+    img = np.zeros((N, N+1, N+1))
+    for i in range(N):
+        img[i, i:i+2, i:i+2] = 1
+    s_bin = tau.Solver(img, device='cpu')
+    s_bin.solve(iter_limit=1000)
+    s_mp = tau.MultiPhaseSolver(img, device='cpu')
+    s_mp.solve(iter_limit=1000)
+    assert np.isclose(float(np.asarray(s_bin.tau)[0]), float(np.asarray(s_mp.tau)[0]), atol=1e-3)
 
 
 ###  Testing the tau_e solver
