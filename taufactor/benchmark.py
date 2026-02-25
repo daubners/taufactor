@@ -8,6 +8,7 @@ import io
 import itertools
 import os
 import time
+from collections.abc import Callable
 from contextlib import redirect_stdout
 
 import torch
@@ -22,6 +23,14 @@ SOLVER_REGISTRY = {
     name: cls
     for name, cls in vars(tau).items()
     if name.endswith("Solver") and isinstance(cls, type) and not inspect.isabstract(cls)
+}
+
+STRUCTURE_REGISTRY = {
+    "fcc": lambda N, features=None: (create_fcc_cube(N, overlap=0.05) == 0).astype(int),
+    "blocks": create_stacked_blocks,
+    "diagonal2d": create_2d_diagonals,
+    "zigzag": create_2d_zigzag,
+    "diagonal3d": create_3d_diagonals,
 }
 
 
@@ -39,6 +48,53 @@ def resolve_solver(solver: str | type | None) -> type:
     if isinstance(solver, type):
         return solver
     raise TypeError("solver must be None, a solver class, or a solver name string")
+
+def _call_structure_hook(
+    structure_fn: Callable,
+    N: int,
+    features: int | None,
+):
+    """Call custom structure hooks with flexible, user-friendly signatures."""
+    attempts = [
+        lambda: structure_fn(N=N, features=features),
+        lambda: structure_fn(Nx=N, features=features),
+        lambda: structure_fn(N, features=features),
+        lambda: structure_fn(N),
+    ]
+    last_exc = None
+    for attempt in attempts:
+        try:
+            return attempt()
+        except TypeError as exc:
+            last_exc = exc
+            continue
+    raise TypeError(
+        "Unable to call custom structure hook. Expected a callable that accepts "
+        "N or Nx (optionally features)."
+    ) from last_exc
+
+
+def resolve_structure(
+    structure: str | Callable,
+    N: int,
+    features: int | None = None,
+) -> tuple:
+    """Resolve a benchmark structure from a predefined name or custom callable."""
+    if isinstance(structure, str):
+        if structure not in STRUCTURE_REGISTRY:
+            available = ", ".join(sorted(STRUCTURE_REGISTRY))
+            raise ValueError(
+                f"Unknown structure '{structure}'. Supported: {available}"
+            )
+        cube = STRUCTURE_REGISTRY[structure](N, features=features)
+        return cube, structure
+
+    if callable(structure):
+        cube = _call_structure_hook(structure, N=N, features=features)
+        structure_name = getattr(structure, "__name__", structure.__class__.__name__)
+        return cube, structure_name
+
+    raise TypeError("structure must be a predefined structure name or a callable hook")
 
 
 def write_header_if_missing(outfile: str = DEFAULT_OUTFILE) -> None:
@@ -68,29 +124,20 @@ def run_benchmark_case(
     N: int,
     device: str,
     conv_crit: float,
-    structure: str = "fcc",
+    structure: str | Callable = "fcc",
     features: int | None = None,
     iter_limit: int = 10000,
     solver: str | type | None = None,
     solver_kwargs: dict | None = None,
     solve_kwargs: dict | None = None,
 ) -> dict:
-    """Run a single structure benchmark case."""
-    if structure == "fcc":
-        cube = create_fcc_cube(N, overlap=0.05)
-        cube = (cube==0).astype(int)
-    elif structure == "blocks":
-        cube = create_stacked_blocks(N, features=features)
-    elif structure == "diagonal2d":
-        cube = create_2d_diagonals(N, features=features)
-    elif structure == "zigzag":
-        cube = create_2d_zigzag(N, features=features)
-    elif structure == "diagonal3d":
-        cube = create_3d_diagonals(N, features=features)
-    else:
-        raise ValueError(
-            f"Unknown structure '{structure}'. Supported: fcc, blocks, diagonal2d, zigzag, diagonal3d"
-        )
+    """Run a single structure benchmark case.
+
+    Args:
+        structure: Either one of the predefined keys in ``STRUCTURE_REGISTRY``
+            or a custom callable hook returning a structure array.
+    """
+    cube, structure_name = resolve_structure(structure, N=N, features=features)
 
     solver_cls = resolve_solver(solver)
     solver_kwargs = dict(solver_kwargs or {})
@@ -116,13 +163,11 @@ def run_benchmark_case(
 
     out = buf.getvalue().splitlines()
 
-    conv_line = next(line for line in out if line.startswith("converged to"))
-    torch_line = next((line for line in out if "GPU-RAM" in line), "")
-
-    iterations = int(conv_line.split()[4])
-    wall_time = float(conv_line.split()[7])
+    iterations = int(solver.iter)
+    wall_time = float(solver.walltime)
     taufactor = float(solver.tau[0])
 
+    torch_line = next((line for line in out if "GPU-RAM" in line), "")
     if torch_line:
         parts = torch_line.replace("(", "").replace(")", "").replace(",", "").split()
         torch_cur = float(parts[2])
@@ -135,7 +180,7 @@ def run_benchmark_case(
 
     return {
         "N": N,
-        "structure": structure,
+        "structure": structure_name,
         "solver": solver_cls.__name__,
         "device": device,
         "conv_crit": conv_crit,
@@ -153,8 +198,8 @@ def run_benchmark_study(
     Ns: list[int] | tuple[int, ...] = (100, 128, 200, 256, 300, 384, 400),
     devices: list[str] | tuple[str, ...] = ("cuda",),
     conv_crit_values: list[float] | tuple[float, ...] = (1e-3,),
-    structure: str = "fcc",
-    features: int | None = None,
+    structure: str | Callable = "fcc",
+    features: int = 1,
     outfile: str = DEFAULT_OUTFILE,
     write_file: bool = True,
     iter_limit: int = 10000,
@@ -162,7 +207,14 @@ def run_benchmark_study(
     solver_kwargs: dict | None = None,
     solve_kwargs: dict | None = None,
 ) -> list[dict]:
-    """Run a convergence benchmark on synthetic structures."""
+    """Run a convergence benchmark on synthetic structures.
+
+    Args:
+        structure: Either a predefined structure name (``fcc``, ``blocks``,
+            ``diagonal2d``, ``zigzag``, ``diagonal3d``) or a custom callable
+            hook. Custom hooks should accept ``N`` or ``Nx`` and can
+            optionally accept ``features``.
+    """
     rows: list[dict] = []
 
     if write_file:

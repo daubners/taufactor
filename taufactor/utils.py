@@ -165,15 +165,19 @@ def theoretical_fcc_metrics(a, overlap):
     return volume_fraction, specific_surface, cap_radius
 
 def create_stacked_blocks(Nx, features=1):
-    """Create the shifted block/checkerboard structure used for solver benchmarks."""
+    """Create stacked blocks with alternating half-block shifts in y and z.
+
+    The x-direction is divided into rows of block thickness ``feature_size``.
+    Every second x-row is shifted by half a block in y and z, producing a
+    staggered (brick-like) arrangement in the yz-plane.
+    """
     if Nx % (2*features) != 0:
         raise ValueError(f"Nx must be a multiple of 2*features; got Nx={Nx} and features={features}")
     feature_size = Nx // (2*features)
     x, y, z = np.ogrid[:Nx, :Nx, :Nx]
-    shift = ((x // feature_size) % 2 ) * Nx // 4
-    pattern = (
-        ((x // feature_size) + ((y + shift) // feature_size) + ((z + shift) // feature_size)) % 2
-    )
+    half_block_shift = feature_size // 2
+    shift = ((x // feature_size) % 2) * half_block_shift
+    pattern = (((y + shift) // feature_size) + ((z - shift) // feature_size)) % 2
     return pattern.astype(int)
 
 def create_2d_diagonals(Nx, features=1):

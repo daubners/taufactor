@@ -324,7 +324,8 @@ class ImpedanceSolver(SORSolver):
                 # Compute tau_e from last impedance (at lowest frquency)
                 self.taus.append(self.tau)
             print(self.taus)
-            self._end_simulation(self.sum_iter, verbose, start)
+            self.walltime = timer() - start
+            self._end_simulation(self.sum_iter, verbose)
 
     def calc_input_impedance(self):
         # Calculate total current on left boundary
