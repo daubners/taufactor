@@ -117,7 +117,7 @@ class SORSolver(ABC):
     def apply_boundary_conditions(self):
         """Default: Dirichlet in x and no-flux in y and z direction."""
 
-    def sum_weighted_neighbours(self, out: "torch.Tensor") -> None:
+    def sum_weighted_neighbours(self, out: torch.Tensor) -> None:
         """Isotropic 6-neighbor sum into a preallocated interior buffer."""
         torch.add(self.field[:, 2:, 1:-1, 1:-1], self.field[:, :-2, 1:-1, 1:-1], out=out)
         out.add_(self.field[:, 1:-1, 2:, 1:-1])
@@ -125,7 +125,7 @@ class SORSolver(ABC):
         out.add_(self.field[:, 1:-1, 1:-1, 2:])
         out.add_(self.field[:, 1:-1, 1:-1, :-2])
 
-    def _apply_chequerboard(self, work: "torch.Tensor") -> None:
+    def _apply_chequerboard(self, work: torch.Tensor) -> None:
         """Zero the inactive colour and scale by omega, in-place."""
         work.mul_(self.omega)
         mask_zero = self._cb_inv if (self.iter % 2 == 0) else self.cb
@@ -290,7 +290,7 @@ class SORSolver(ABC):
         return sum
 
     @staticmethod
-    def _neighbour_sum_from_padded(padded: "torch.Tensor", out: "torch.Tensor") -> None:
+    def _neighbour_sum_from_padded(padded: torch.Tensor, out: torch.Tensor) -> None:
         """6-neighbour sum from a +1-padded volume into an interior-sized buffer."""
         torch.add(padded[:, 2:, 1:-1, 1:-1], padded[:, :-2, 1:-1, 1:-1], out=out)
         out.add_(padded[:, 1:-1, 2:, 1:-1])
