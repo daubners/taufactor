@@ -1,14 +1,17 @@
 """Main module."""
-from IPython.display import clear_output
-import numpy as np
 from timeit import default_timer as timer
+
 import matplotlib.pyplot as plt
+import numpy as np
+from IPython.display import clear_output
+
 try:
     import torch
-except Exception:
+except ImportError:
     torch = None
 from .taufactor import SORSolver
 from .utils import compute_impedance, compute_impedance_batched
+
 
 class ElectrodeSolver(SORSolver):
     """
@@ -108,7 +111,7 @@ class ElectrodeSolver(SORSolver):
         clear_output(wait=True)
         i = np.argmax(relative_error)
         print(f'Iter: {self.iter}, conv error: {abs(relative_error[i]):.3E}, tau: {self.tau[i]:.5f} (batch element {i})')
-        fig, ax = plt.subplots() #figsize=(10, 4), dpi=200)
+        _, ax = plt.subplots() #figsize=(10, 4), dpi=200)
         x = np.arange(0, self.Nx)+0.5
         ax.plot(x, self.vol_x[i], label='$\\epsilon(x)$', color='gray', linestyle='--')
 
@@ -281,7 +284,6 @@ class ImpedanceSolver(SORSolver):
         if verbose == 'debug':
             self.tau_t = []
 
-        self.tau
         self.impedance = []
         self.converged_freq = []
         self.taus = []
@@ -338,7 +340,7 @@ class ImpedanceSolver(SORSolver):
         clear_output(wait=True)
         i = np.argmax(relative_error)
         print(f'Iter: {self.iter}, conv error: {abs(relative_error[i]):.3E}, tau: {self.tau[i]:.5f} (batch element {i})')
-        fig, ax = plt.subplots(1, 2, figsize=(10, 4), dpi=200)
+        _, ax = plt.subplots(1, 2, figsize=(10, 4), dpi=200)
         x = np.arange(0, self.Nx)+0.5
         ax[0].plot(x, self.vol_x, label='vol_x', color='gray', linestyle='--')
         ax[0].plot(x, self.c_x, label='c_x', color='blue', linestyle='-')

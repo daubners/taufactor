@@ -1,12 +1,12 @@
 try:
     import torch
     import torch.nn.functional as F
-except Exception:
+except ImportError:
     torch = None
     F = None
 
 
-def volume_fraction(img, phases={}):
+def volume_fraction(img, phases=None):
     """Compute volume fractions for labels in a segmented image.
 
     Calculates the fraction of voxels belonging to each phase. If
@@ -34,7 +34,7 @@ def volume_fraction(img, phases={}):
     if type(img) is not type(torch.tensor(1)):
         img = torch.tensor(img)
 
-    if phases=={}:
+    if phases is None:
         volume = torch.numel(img)
         labels, counts = torch.unique(img, return_counts=True)
         labels = labels.int()

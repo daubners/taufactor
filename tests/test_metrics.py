@@ -1,20 +1,21 @@
 """Tests for `taufactor` package."""
 
+import numpy as np
+import pytest
+
 from taufactor.metrics import (
     estimate_3d_psd_saltykov,
     interfacial_areas,
     particle_size_distribution,
     particle_size_distribution_2d,
-    specific_surface_area,
-    triple_phase_boundary,
-    volume_fraction,
-    remove_boundary_features,
     relabel_random_order,
     relabel_sequential,
+    remove_boundary_features,
+    specific_surface_area,
     split_lumped_labels,
+    triple_phase_boundary,
+    volume_fraction,
 )
-import numpy as np
-import pytest
 
 
 # Volume fraction

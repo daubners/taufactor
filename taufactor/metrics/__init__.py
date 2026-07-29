@@ -1,4 +1,4 @@
-from .base import volume_fraction, triple_phase_boundary
+from .base import triple_phase_boundary, volume_fraction
 from .connectivity import (
     extract_through_feature,
     find_front_labels,
@@ -17,19 +17,19 @@ from .particles import (
 from .surfaces import interfacial_areas, specific_surface_area
 
 __all__ = [
-    "volume_fraction",
-    "specific_surface_area",
-    "interfacial_areas",
+    "estimate_3d_psd_saltykov",
     "extract_through_feature",
     "find_front_labels",
     "find_spanning_labels",
+    "interfacial_areas",
     "label_periodic",
     "particle_size_distribution",
     "particle_size_distribution_2d",
-    "estimate_3d_psd_saltykov",
-    "remove_boundary_features",
     "relabel_random_order",
     "relabel_sequential",
+    "remove_boundary_features",
+    "specific_surface_area",
     "split_lumped_labels",
     "triple_phase_boundary",
+    "volume_fraction",
 ]

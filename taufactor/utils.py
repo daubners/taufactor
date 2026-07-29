@@ -1,5 +1,5 @@
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 def plot_flux_direction(im, outpath=None):
@@ -45,7 +45,7 @@ def plot_flux_direction(im, outpath=None):
             ax.annotate(
                 "Flux", xy=(w * 1.02, h / 2), xytext=(w * 1.02, h / 2),
                 textcoords="data", rotation=90, va="center", ha="left",
-                bbox=dict(boxstyle="rarrow,pad=0.3", fc="white", ec="black", lw=1),
+                bbox={"boxstyle": "rarrow,pad=0.3", "fc": "white", "ec": "black", "lw": 1},
                 fontsize=12,
             )
         fig.suptitle(

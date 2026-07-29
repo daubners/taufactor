@@ -1,8 +1,8 @@
-import numpy as np
 import warnings
 
-from skimage import measure
+import numpy as np
 from scipy.ndimage import find_objects, generate_binary_structure, label
+from skimage import measure
 
 from .surfaces import specific_surface_area
 
@@ -113,7 +113,7 @@ def split_lumped_labels(labelled_array, connectivity=1, background=0, verbose=Tr
 
     report = {
         "n_labels": int(n_labels),
-        "n_split_labels": int(len(split_labels)),
+        "n_split_labels": len(split_labels),
         "n_new_labels": int(sum(len(new_labels) for new_labels in split_labels.values())),
         "split_labels": split_labels,
         "has_splits": bool(split_labels),

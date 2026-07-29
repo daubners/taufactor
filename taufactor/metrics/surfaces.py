@@ -1,11 +1,12 @@
+import warnings
+
 import numpy as np
 import psutil
-import warnings
 
 try:
     import torch
     import torch.nn.functional as F
-except Exception:
+except ImportError:
     torch = None
     F = None
 
@@ -93,9 +94,9 @@ def _gaussian_kernel_3d_numpy(size=3, sigma=1.0):
 def specific_surface_area(
     img,
     spacing = (1,1,1),
-    phases = {},
+    phases = None,
     method = 'gradient',
-    periodic = [False,False,False],
+    periodic = None,
     device = 'cuda',
     smoothing = True,
     sigma = 0.8,
@@ -137,6 +138,11 @@ def specific_surface_area(
     """
     if torch is None:
         raise ImportError("PyTorch is required.")
+
+    if phases is None:
+        phases = {}
+    if periodic is None:
+        periodic = [False, False, False]
 
     dx, dy, dz = spacing
     nx, ny, nz = img.shape
@@ -262,7 +268,7 @@ def interfacial_areas(
     img,
     spacing = (1,1,1),
     method = 'face_counting',
-    periodic = [False,False,False],
+    periodic = None,
     normalize = True,
     device = 'cuda',
     smoothing = True,
@@ -270,6 +276,9 @@ def interfacial_areas(
 ):
     if torch is None:
         raise ImportError("PyTorch is required.")
+
+    if periodic is None:
+        periodic = [False, False, False]
 
     dx, dy, dz = spacing
     nx, ny, nz = img.shape
