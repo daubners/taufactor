@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 """Tests for `taufactor` package."""
 
 import numpy as np
