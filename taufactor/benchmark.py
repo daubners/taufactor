@@ -14,7 +14,13 @@ from contextlib import redirect_stdout
 import torch
 
 import taufactor as tau
-from taufactor.utils import create_fcc_cube, create_2d_diagonals, create_3d_diagonals, create_stacked_blocks, create_2d_zigzag
+from taufactor.utils import (
+    create_2d_diagonals,
+    create_2d_zigzag,
+    create_3d_diagonals,
+    create_fcc_cube,
+    create_stacked_blocks,
+)
 
 DEFAULT_OUTFILE = "taufactor_benchmark_results.txt"
 

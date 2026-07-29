@@ -1,11 +1,10 @@
-#!/usr/bin/env python
-
 """Tests for `taufactor` package."""
 
-import taufactor as tau
-import torch as pt
 import numpy as np
 import pytest
+import torch as pt
+
+import taufactor as tau
 
 
 ###  Testing the main solver

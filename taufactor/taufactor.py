@@ -1,14 +1,19 @@
 """Main module."""
-import numpy as np
+from __future__ import annotations
+
+import warnings
 from abc import ABC, abstractmethod
-from IPython.display import clear_output
 from timeit import default_timer as timer
+
 import matplotlib.pyplot as plt
+import numpy as np
+from IPython.display import clear_output
+
 try:
     import torch
-except Exception:
+except ImportError:
     torch = None
-import warnings
+
 from .metrics import extract_through_feature
 
 
@@ -90,7 +95,6 @@ class SORSolver(ABC):
     
     def apply_boundary_conditions(self):
         """Default: Dirichlet in x and no-flux in y and z direction."""
-        pass
 
     def sum_weighted_neighbours(self) -> torch.Tensor:
         """Default: isotropic 6-neighbor SOR increment on interior."""
@@ -104,7 +108,6 @@ class SORSolver(ABC):
     
     def plot_stats(self, relative_error):
         """Default: No plotting output."""
-        pass
     
     def check_convergence(self, verbose, conv_crit, plot_interval):
         self.tau, relative_error = self.compute_metrics()
@@ -123,7 +126,7 @@ class SORSolver(ABC):
                 clear_output(wait=True)
                 i = np.argmax(np.abs(relative_error))
                 print(f'Iter: {self.iter}, conv error: {np.abs(relative_error[i]):.3E}, tau: {self.tau[i]:.5f} (batch element {i})')
-                fig, ax = plt.subplots(figsize=(8,2), dpi=200)
+                _, ax = plt.subplots(figsize=(8,2), dpi=200)
                 taus = np.array(self.tau_t)
                 x = np.arange(0, taus.shape[0])*100
                 min_tau, max_tau = 1, 1
@@ -337,7 +340,7 @@ class ThroughTransportSolver(SORSolver):
         print(f'Iter: {self.iter}, conv error: {abs(relative_error[i]):.3E}, tau: {self.tau[i]:.5f} (batch element {i})')
         mean = np.expand_dims(np.mean(self.flux_1d, axis=1), 1)
         rel_fluxes = ((self.flux_1d - mean)/mean)
-        fig, ax = plt.subplots(figsize=(8,2), dpi=200)
+        _, ax = plt.subplots(figsize=(8,2), dpi=200)
         x = np.arange(0, rel_fluxes.shape[1])+0.5
         for b in range(self.batch_size):
             if relative_error[b] > 0:
@@ -444,7 +447,7 @@ class AnisotropicSolver(Solver):
         UserWarning: If spacing anisotropy is very large.
     """
 
-    def __init__(self, img, spacing, omega=None, D_0=1, device=torch.device('cuda:0')):
+    def __init__(self, img, spacing, omega=None, D_0=1, device='cuda:0'):
         if not isinstance(spacing, (list, tuple)) or len(spacing) != 3:
             raise ValueError("spacing must be a list or tuple with three elements (dx, dy, dz)")
         if not all(isinstance(x, (int, float)) for x in spacing):

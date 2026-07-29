@@ -1,6 +1,5 @@
 import numpy as np
-
-from scipy.ndimage import label, generate_binary_structure
+from scipy.ndimage import generate_binary_structure, label
 
 from .base import volume_fraction
 
@@ -29,7 +28,7 @@ def label_periodic(field, grayscale_value, neighbour_structure, periodic, debug=
     pady = int(periodic[1])
     padz = int(periodic[2])
     mask = np.pad(field, ((padx, padx), (pady, pady), (padz, padz)), mode='wrap')
-    labeled_mask, num_labels = label(mask==grayscale_value, structure=neighbour_structure)
+    labeled_mask, _ = label(mask==grayscale_value, structure=neighbour_structure)
     count = 1
     for k in range(100):
         # Find indices where labels are different at the boundaries and create swaplist
@@ -139,7 +138,7 @@ def extract_through_feature(
     array,
     grayscale_value,
     axis,
-    periodic=[False,False,False],
+    periodic=None,
     connectivity=1,
     open_end=True,
     debug=False
@@ -174,6 +173,9 @@ def extract_through_feature(
         - 2: faces + edges (18-neighborhood),
         - 3: faces + edges + corners (26-neighborhood).
     """
+    if periodic is None:
+        periodic = [False, False, False]
+
     if array.ndim != 3:
         print(f"Expected a 3D array, but got an array with {array.ndim} dimension(s).")
         return None
@@ -189,8 +191,7 @@ def extract_through_feature(
     through_feature_fraction = np.zeros(len(connectivities_to_loop_over))
 
     # Compute the largest interconnected features depending on given connectivity
-    count = 0
-    for conn in connectivities_to_loop_over:
+    for count, conn in enumerate(connectivities_to_loop_over):
         neighbour_structure = generate_binary_structure(3, conn)
         # Label connected components in the mask with given neighbour structure
         if any(periodic):
@@ -208,6 +209,4 @@ def extract_through_feature(
 
         through_feature.append(spanning_network)
         through_feature_fraction[count] = volume_fraction(spanning_network, phases={'1': 1})['1']/vol_phase
-        count += 1
-
     return through_feature, through_feature_fraction

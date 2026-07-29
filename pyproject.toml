@@ -62,4 +62,4 @@ addopts = "-ra -q"
 testpaths = ["tests"]
 
 [tool.ruff]
-exclude = ["notebooks", "paper"]
+exclude = ["docs/notebooks", "docs/paper"]

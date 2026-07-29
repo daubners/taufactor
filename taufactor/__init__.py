@@ -1,11 +1,27 @@
 """Top-level package for TauFactor."""
 
-from .taufactor import Solver, PeriodicSolver, \
-                       AnisotropicSolver, MultiPhaseSolver, PeriodicMultiPhaseSolver
-from .electrode import ElectrodeSolver, PeriodicElectrodeSolver, \
-                       ImpedanceSolver, PeriodicImpedanceSolver
+from .electrode import (
+    ElectrodeSolver,
+    ImpedanceSolver,
+    PeriodicElectrodeSolver,
+    PeriodicImpedanceSolver,
+)
+from .taufactor import (
+    AnisotropicSolver,
+    MultiPhaseSolver,
+    PeriodicMultiPhaseSolver,
+    PeriodicSolver,
+    Solver,
+)
 
-__all__ = ['Solver', 'PeriodicSolver',\
-           'AnisotropicSolver', 'MultiPhaseSolver', 'PeriodicMultiPhaseSolver',\
-           'ElectrodeSolver', 'PeriodicElectrodeSolver', \
-           'ImpedanceSolver', 'PeriodicImpedanceSolver']
+__all__ = [
+    'AnisotropicSolver',
+    'ElectrodeSolver',
+    'ImpedanceSolver',
+    'MultiPhaseSolver',
+    'PeriodicElectrodeSolver',
+    'PeriodicImpedanceSolver',
+    'PeriodicMultiPhaseSolver',
+    'PeriodicSolver',
+    'Solver',
+]
