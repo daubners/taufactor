@@ -49,7 +49,6 @@ class ElectrodeSolver(SORSolver):
         for i in range(2):
             vec = torch.unsqueeze(vec, -1)
         vec = torch.unsqueeze(vec, 0)
-        vec = vec.repeat(self.batch_size, 1, self.Ny, self.Nz, )
         return self._pad(mask * vec, [self.left_bc * 2, 0])
 
     def init_conductive_neighbours(self, img, mask):
@@ -142,21 +141,24 @@ class PeriodicElectrodeSolver(ElectrodeSolver):
     Solver with periodic boundary conditions in y and z direction.
     """
     def init_conductive_neighbours(self, img, mask):
-        # Periodic Y/Z: pad then strip Y/Z ghosts before neighbour sum via rolling
-        img2 = self._pad(mask, [2, 0])[:, :, 1:-1, 1:-1]
-        cond_nn = self._sum_by_rolling(img2)
-        del img2
-        cond_nn = cond_nn[:, 1:-1]
+        padded = self._pad(mask, [2, 0])[:, :, 1:-1, 1:-1]
+        cond_nn = torch.empty_like(mask)
+        self._periodic_yz_neighbour_sum_from_padded(padded, cond_nn)
+        del padded
         cond_nn.masked_fill_(mask == 0, torch.inf)
         return cond_nn
 
     def init_reactive_neighbours(self, img):
         reac = (img == self.reac_label).to(dtype=self.precision)
-        img2 = self._pad(reac)[:, :, 1:-1, 1:-1]
+        padded = self._pad(reac)[:, :, 1:-1, 1:-1]
         del reac
-        reac_nn = self._sum_by_rolling(img2)
-        del img2
-        reac_nn = reac_nn[:, 1:-1]
+        reac_nn = torch.empty(
+            (self.batch_size, self.Nx, self.Ny, self.Nz),
+            dtype=self.precision,
+            device=self.device,
+        )
+        self._periodic_yz_neighbour_sum_from_padded(padded, reac_nn)
+        del padded
         reac_nn.masked_fill_(img != self.cond_label, 0)
         return reac_nn
 
@@ -241,7 +243,6 @@ class ImpedanceSolver(SORSolver):
         for i in range(2):
             vec = torch.unsqueeze(vec, -1)
         vec = torch.unsqueeze(vec, 0)
-        vec = vec.repeat(self.batch_size, 1, self.Ny, self.Nz, )
         mask_f = mask.to(vec.dtype) if mask.dtype == torch.bool else mask
         return self._pad(mask_f * vec, [2 * self.left_bc, 0]).to(self.device)
 
@@ -258,16 +259,18 @@ class ImpedanceSolver(SORSolver):
         :rtype: cp.array
         """      
         # Conducting nearest neighbours
-        img2 = self._pad(mask, [2, 0])
-        cond_nn = self._sum_by_rolling(img2)
-        cond_nn = self._crop(cond_nn, 1)
+        padded = self._pad(mask, [2, 0])
+        cond_nn = torch.empty_like(mask)
+        self._neighbour_sum_from_padded(padded, cond_nn)
+        del padded
 
         # Capacitive nearest neighbours
-        img2 = torch.zeros_like(img)
-        img2[img==self.reac_label] = 1
-        img2 = self._pad(img2)
-        reac_nn = self._sum_by_rolling(img2)
-        reac_nn = self._crop(reac_nn, 1)
+        reac = (img == self.reac_label).to(dtype=self.precision)
+        padded = self._pad(reac)
+        del reac
+        reac_nn = torch.empty_like(mask)
+        self._neighbour_sum_from_padded(padded, reac_nn)
+        del padded
 
         # Masking conducting voxels
         cond_nn[mask == 0] = 0.0

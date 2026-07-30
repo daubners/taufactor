@@ -272,16 +272,6 @@ class SORSolver(ABC):
         return img[:, c:-c, c:-c, c:-c]
     
     @staticmethod
-    def _sum_by_rolling(tensor: torch.Tensor):
-        """Sum up active neighbours and return new tensor"""
-        sum = torch.zeros_like(tensor)
-        # iterate through shifts in the spatial dimensions
-        for dim in range(1, 4):
-            for dr in [1, -1]:
-                sum += torch.roll(tensor, dr, dim)
-        return sum
-
-    @staticmethod
     def _neighbour_sum_from_padded(padded: torch.Tensor, out: torch.Tensor) -> None:
         """6-neighbour sum from a +1-padded volume into an interior-sized buffer."""
         torch.add(padded[:, 2:, 1:-1, 1:-1], padded[:, :-2, 1:-1, 1:-1], out=out)
@@ -289,6 +279,22 @@ class SORSolver(ABC):
         out.add_(padded[:, 1:-1, :-2, 1:-1])
         out.add_(padded[:, 1:-1, 1:-1, 2:])
         out.add_(padded[:, 1:-1, 1:-1, :-2])
+
+    @staticmethod
+    def _periodic_yz_neighbour_sum_from_padded(
+        padded: torch.Tensor, out: torch.Tensor
+    ) -> None:
+        """6-neighbour sum with X ghosts and periodic Y/Z boundaries."""
+        center = padded[:, 1:-1]
+        torch.add(padded[:, :-2], padded[:, 2:], out=out)
+        out[:, :, 1:].add_(center[:, :, :-1])
+        out[:, :, :-1].add_(center[:, :, 1:])
+        out[:, :, 0].add_(center[:, :, -1])
+        out[:, :, -1].add_(center[:, :, 0])
+        out[:, :, :, 1:].add_(center[:, :, :, :-1])
+        out[:, :, :, :-1].add_(center[:, :, :, 1:])
+        out[:, :, :, 0].add_(center[:, :, :, -1])
+        out[:, :, :, -1].add_(center[:, :, :, 0])
 
     def _end_simulation(self, iterations: int, verbose: bool):
         if self.converged:
@@ -325,7 +331,6 @@ class ThroughTransportSolver(SORSolver):
         for i in range(2):
             vec = torch.unsqueeze(vec, -1)
         vec = torch.unsqueeze(vec, 0)
-        vec = vec.repeat(self.batch_size, 1, self.Ny, self.Nz, )
         return self._pad(mask * vec, [2*self.top_bc, 2*self.bot_bc])
 
     def compute_metrics(self):
@@ -531,9 +536,10 @@ class PeriodicSolver(Solver):
     """
 
     def init_conductive_neighbours(self, img, mask):
-        img2 = self._pad(mask, [2, 2])[:, :, 1:-1, 1:-1]
-        nn = self._sum_by_rolling(img2)
-        nn = nn[:, 1:-1]
+        padded = self._pad(mask, [2, 2])[:, :, 1:-1, 1:-1]
+        nn = torch.empty_like(mask)
+        self._periodic_yz_neighbour_sum_from_padded(padded, nn)
+        del padded
         nn[mask == 0] = torch.inf
         nn[nn == 0] = torch.inf
         return nn
