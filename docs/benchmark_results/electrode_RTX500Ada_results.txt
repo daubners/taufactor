@@ -1,0 +1,10 @@
+   N     struct           solver  dev   conv  Ttime(s)  Wtime(s)  iters      tau VRAM_I_max VRAM_I_cur VRAM_S_max VRAM_S_cur
+========================================================================================================================
+  32  electrode  ElectrodeSolver cuda 0.0010     0.150     0.142    600    2.689       0.86       0.35       0.75       0.35
+  64  electrode  ElectrodeSolver cuda 0.0010     0.233     0.217    500    1.788       6.69       2.72       5.87       2.72
+ 128  electrode  ElectrodeSolver cuda 0.0010     1.298     1.279   1400    2.153      36.18      21.37      46.54      21.37
+ 256  electrode  ElectrodeSolver cuda 0.0010    36.280    36.227   2200    2.073     287.31     169.87     371.20     169.87
+  32  electrode PeriodicElectrod cuda 0.0010     0.230     0.225    600    1.983       0.86       0.35       0.75       0.35
+  64  electrode PeriodicElectrod cuda 0.0010     0.149     0.139    500    1.638       6.69       2.72       5.87       2.72
+ 128  electrode PeriodicElectrod cuda 0.0010     1.240     1.225   1300    2.072      36.18      21.37      46.54      21.37
+ 256  electrode PeriodicElectrod cuda 0.0010    34.949    34.896   2100    2.008     287.31     169.87     371.20     169.87
