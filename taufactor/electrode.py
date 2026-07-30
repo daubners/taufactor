@@ -298,14 +298,13 @@ class ImpedanceSolver(SORSolver):
         # init field
         self.frc = self.frequency[0]*self.resistance*self.capacitance
         self.field = self.init_field_internal(self.mask)
-        if self.work is None or self.work.dtype != self.field.dtype:
-            self.work = torch.empty(
+
+        with torch.no_grad():
+            increment = torch.empty(
                 (self.batch_size, self.Nx, self.Ny, self.Nz),
                 dtype=self.field.dtype,
                 device=self.device,
             )
-
-        with torch.no_grad():
             start = timer()
             for f in self.frequency:
                 self.frc = f*self.resistance*self.capacitance
@@ -325,11 +324,11 @@ class ImpedanceSolver(SORSolver):
                 self.iter = 0
                 while not self.converged and self.iter < iter_limit:
                     self.apply_boundary_conditions()
-                    self.sum_weighted_neighbours(self.work)
-                    self.work.mul_(factor)
-                    self.work.sub_(self.field[:, 1:-1, 1:-1, 1:-1])
-                    self._apply_chequerboard(self.work)
-                    self.field[:, 1:-1, 1:-1, 1:-1].add_(self.work)
+                    self.sum_weighted_neighbours(increment)
+                    increment *= factor
+                    increment -= self.field[:, 1:-1, 1:-1, 1:-1]
+                    self._apply_chequerboard(increment)
+                    self.field[:, 1:-1, 1:-1, 1:-1] += increment
                     self.iter += 1
 
                     if self.iter % 100 == 0:

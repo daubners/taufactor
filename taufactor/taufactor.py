@@ -64,25 +64,12 @@ class SORSolver(ABC):
             self.factor.masked_fill_(self.factor == 0, torch.inf)
             self.a_x = a_x.cpu().numpy()
             self.k_0 = k_0.cpu().numpy()
-            if self.device.type == 'cuda':
-                torch.cuda.empty_cache()
 
         self.field = self.init_field(mask)
         self.vol_x = vol_x.cpu().numpy()
         del mask, vol_x
-        if self.device.type == 'cuda':
-            torch.cuda.empty_cache()
 
         self.cb, self._cb_inv = self._init_chequerboard()
-        # Preallocate hot-loop buffer (ImpedanceSolver sets field later)
-        if self.field is not None:
-            self.work = torch.empty(
-                (self.batch_size, self.Nx, self.Ny, self.Nz),
-                dtype=self.field.dtype,
-                device=self.device,
-            )
-        else:
-            self.work = None
 
         # Init params
         self.converged = False
@@ -113,7 +100,7 @@ class SORSolver(ABC):
     def init_reactive_neighbours(self, img: torch.Tensor) -> torch.Tensor:
         """S_i: amount of reactive neighbours (reac_nn)"""
         return None
-    
+
     def apply_boundary_conditions(self):
         """Default: Dirichlet in x and no-flux in y and z direction."""
 
@@ -125,15 +112,15 @@ class SORSolver(ABC):
         out.add_(self.field[:, 1:-1, 1:-1, 2:])
         out.add_(self.field[:, 1:-1, 1:-1, :-2])
 
-    def _apply_chequerboard(self, work: torch.Tensor) -> None:
+    def _apply_chequerboard(self, increment: torch.Tensor) -> None:
         """Zero the inactive colour and scale by omega, in-place."""
-        work.mul_(self.omega)
         mask_zero = self._cb_inv if (self.iter % 2 == 0) else self.cb
-        work.masked_fill_(mask_zero, 0)
-    
+        increment.masked_fill_(mask_zero, 0)
+        increment.mul_(self.omega)
+
     def plot_stats(self, relative_error):
         """Default: No plotting output."""
-    
+
     def check_convergence(self, verbose, conv_crit, plot_interval):
         self.tau, relative_error = self.compute_metrics()
 
@@ -141,7 +128,7 @@ class SORSolver(ABC):
             # Print stats for slowest converging microstructure
             i = np.argmax(relative_error)
             print(f'Iter: {self.iter}, conv error: {abs(relative_error[i]):.3E}, tau: {self.tau[i]:.5f} (batch element {i})')
-            
+
         if (verbose == 'plot') and (self.iter % (100*plot_interval) == 0):
             self.plot_stats(relative_error)
 
@@ -179,7 +166,7 @@ class SORSolver(ABC):
 
         self.tau[self.tau == 0] = np.inf
         return True
-    
+
     # ---------------- main loop -------------------
     def solve(self, iter_limit=10000, verbose=True, conv_crit=1e-2, plot_interval=10):
         """
@@ -198,14 +185,19 @@ class SORSolver(ABC):
             self.tau_t = []
 
         with torch.no_grad():
+            increment = torch.empty(
+                (self.batch_size, self.Nx, self.Ny, self.Nz),
+                dtype=self.field.dtype,
+                device=self.device,
+            )
             start = timer()
             while not self.converged and self.iter < iter_limit:
                 self.apply_boundary_conditions()
-                self.sum_weighted_neighbours(self.work)
-                self.work.div_(self.factor)
-                self.work.sub_(self.field[:, 1:-1, 1:-1, 1:-1])
-                self._apply_chequerboard(self.work)
-                self.field[:, 1:-1, 1:-1, 1:-1].add_(self.work)
+                self.sum_weighted_neighbours(increment)
+                increment /= self.factor
+                increment -= self.field[:, 1:-1, 1:-1, 1:-1]
+                self._apply_chequerboard(increment)
+                self.field[:, 1:-1, 1:-1, 1:-1] += increment
                 self.iter += 1
 
                 if self.iter % 100 == 0:
@@ -229,7 +221,7 @@ class SORSolver(ABC):
         if img.ndim != 4:
             raise ValueError("expected [B, X, Y, Z]")
         return img
-    
+
     @staticmethod
     def _init_device(device) -> torch.device:
         # check device is available
@@ -516,7 +508,7 @@ class AnisotropicSolver(Solver):
         nn[mask == 0] = torch.inf
         nn[nn == 0] = torch.inf
         return nn
-    
+
     def sum_weighted_neighbours(self, out):
         """Anisotropic 6-neighbor sum into a preallocated interior buffer."""
         torch.add(self.field[:, 2:, 1:-1, 1:-1], self.field[:, :-2, 1:-1, 1:-1], out=out)
@@ -650,7 +642,7 @@ class MultiPhaseSolver(ThroughTransportSolver):
         factor[:, -1] += self.D_x[:, -1, :, :]
         factor[factor == 0] = torch.inf
         return factor
-    
+
     def sum_weighted_neighbours(self, out) -> None:
         torch.mul(self.field[:, 2:, 1:-1, 1:-1], self.D_x[:, 1:, :, :], out=out)
         out.addcmul_(self.field[:, :-2, 1:-1, 1:-1], self.D_x[:, :-1, :, :])
