@@ -110,7 +110,8 @@ def write_header_if_missing(outfile: str = DEFAULT_OUTFILE) -> None:
             f.write(
                 f"{'N':>4} {'struct':>10} {'solver':>16} {'dev':>4} {'conv':>6} "
                 f"{'Ttime(s)':>9} {'Wtime(s)':>9} {'iters':>6} {'tau':>8} "
-                f"{'VRAM(cur)':>10} {'VRAM(max)':>10} {'VRAM(res)':>10}\n"
+                f"{'VRAM_I_max':>10} {'VRAM_I_cur':>10} "
+                f"{'VRAM_S_max':>10} {'VRAM_S_cur':>10}\n"
             )
             f.write("=" * 120 + "\n")
 
@@ -120,7 +121,8 @@ def append_row_to_file(row: dict, outfile: str = DEFAULT_OUTFILE) -> None:
     line = (
         f"{row['N']:4d} {row['structure'][:10]:>10} {row['solver'][:16]:>16} {row['device'][:4]:>4} {row['conv_crit']:.4f} "
         f"{row['total_time']:9.3f} {row['solve_time']:9.3f} {row['iterations']:6d} {row['taufactor']:8.3f} "
-        f"{row['torch_cur']:10.2f} {row['torch_max']:10.2f} {row['torch_res']:10.2f}\n"
+        f"{row['torch_init_max']:10.2f} {row['torch_init_cur']:10.2f} "
+        f"{row['torch_solve_max']:10.2f} {row['torch_solve_cur']:10.2f}\n"
     )
     with open(outfile, "a", encoding="utf-8") as f:
         f.write(line)
@@ -156,33 +158,32 @@ def run_benchmark_case(
 
     if device == "cuda":
         torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
     start_time = time.perf_counter()
 
-    buf = io.StringIO()
-    with redirect_stdout(buf):
+    with redirect_stdout(io.StringIO()):
         solver = solver_cls(cube, device=device, **solver_kwargs)
+        if device == "cuda":
+            torch.cuda.synchronize()
+            torch_init_max = torch.cuda.max_memory_allocated() / 1e6
+            torch_init_cur = torch.cuda.memory_allocated() / 1e6
+            torch.cuda.reset_peak_memory_stats()
         solver.solve(iter_limit=iter_limit, conv_crit=conv_crit, **solve_kwargs)
 
         if device == "cuda":
             torch.cuda.synchronize()
         end_time = time.perf_counter()
 
-    out = buf.getvalue().splitlines()
-
     iterations = int(solver.iter)
     wall_time = float(solver.walltime)
     taufactor = float(solver.tau[0])
 
-    torch_line = next((line for line in out if "GPU-RAM" in line), "")
-    if torch_line:
-        parts = torch_line.replace("(", "").replace(")", "").replace(",", "").split()
-        torch_cur = float(parts[2])
-        torch_max = float(parts[6])
-        torch_res = float(parts[8])
+    if device == "cuda":
+        torch_solve_max = torch.cuda.max_memory_allocated() / 1e6
+        torch_solve_cur = torch.cuda.memory_allocated() / 1e6
     else:
-        torch_cur = 0.0
-        torch_max = 0.0
-        torch_res = 0.0
+        torch_init_max = torch_init_cur = 0.0
+        torch_solve_max = torch_solve_cur = 0.0
 
     return {
         "N": N,
@@ -194,9 +195,10 @@ def run_benchmark_case(
         "solve_time": wall_time,
         "iterations": iterations,
         "taufactor": taufactor,
-        "torch_cur": torch_cur,
-        "torch_max": torch_max,
-        "torch_res": torch_res,
+        "torch_init_max": torch_init_max,
+        "torch_init_cur": torch_init_cur,
+        "torch_solve_max": torch_solve_max,
+        "torch_solve_cur": torch_solve_cur,
     }
 
 
