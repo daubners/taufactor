@@ -40,28 +40,36 @@ class SORSolver(ABC):
         # Overrelaxation factor for SOR
         if omega is None:
             omega = 2 - torch.pi / (1.5 * self.Nx)
+        self.omega = float(omega)
 
-        # Initialise pytorch tensors
-        torch_img = torch.tensor(self.cpu_img, dtype=self.precision, device=self.device)
+        # Labels as uint8 on device (4x smaller than float32) to cut init peak VRAM
+        torch_img = torch.as_tensor(self.cpu_img, device=self.device)
+        if torch_img.dtype != torch.uint8:
+            torch_img = torch_img.to(torch.uint8)
         mask = self.return_mask(torch_img)
-        vol_x = torch.mean(mask, (2, 3)) # volume fraction
-        self.field = self.init_field(mask)
-        self.factor = self.init_conductive_neighbours(torch_img)
+        if mask.dtype not in (torch.float16, torch.float32, torch.float64):
+            mask = mask.to(dtype=self.precision)
+        vol_x = torch.mean(mask, (2, 3))  # volume fraction
 
-        # Optional for electrode simulations
+        # Reactive neighbours before field so we can free torch_img early
         reac_nn = self.init_reactive_neighbours(torch_img)
+        self.factor = self.init_conductive_neighbours(torch_img, mask)
+        del torch_img
         if reac_nn is not None:
-            a_x = (torch.sum(reac_nn, (2, 3)) / (self.Ny*self.Nz*self.dx)) # surface area
-            # Pre-compute reaction prefactor
-            k_0 = torch.mean(vol_x, 1) / torch.mean(a_x*self.dx, 1) / self.Nx**2
-            reac_nn = reac_nn * k_0[:, None, None, None]
-            self.factor += reac_nn
-            self.factor[self.factor == 0] = torch.inf
+            a_x = (torch.sum(reac_nn, (2, 3)) / (self.Ny * self.Nz * self.dx))
+            k_0 = torch.mean(vol_x, 1) / torch.mean(a_x * self.dx, 1) / self.Nx**2
+            reac_nn.mul_(k_0[:, None, None, None])
+            self.factor.add_(reac_nn)
+            del reac_nn
+            self.factor.masked_fill_(self.factor == 0, torch.inf)
             self.a_x = a_x.cpu().numpy()
             self.k_0 = k_0.cpu().numpy()
 
+        self.field = self.init_field(mask)
         self.vol_x = vol_x.cpu().numpy()
-        self.cb = self._init_chequerboard(omega)
+        del mask, vol_x
+
+        self.cb, self._cb_inv = self._init_chequerboard()
 
         # Init params
         self.converged = False
@@ -81,7 +89,7 @@ class SORSolver(ABC):
         """Return initial padded field [bs,Nx+2,Ny+2,Nz+2]."""
 
     @abstractmethod 
-    def init_conductive_neighbours(self, img: torch.Tensor) -> torch.Tensor:
+    def init_conductive_neighbours(self, img: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """N_i: amount of conductive neighbours (cond_nn)"""
 
     @abstractmethod 
@@ -92,23 +100,27 @@ class SORSolver(ABC):
     def init_reactive_neighbours(self, img: torch.Tensor) -> torch.Tensor:
         """S_i: amount of reactive neighbours (reac_nn)"""
         return None
-    
+
     def apply_boundary_conditions(self):
         """Default: Dirichlet in x and no-flux in y and z direction."""
 
-    def sum_weighted_neighbours(self) -> torch.Tensor:
-        """Default: isotropic 6-neighbor SOR increment on interior."""
-        sum = self.field[:, 2:, 1:-1, 1:-1] + \
-              self.field[:, :-2, 1:-1, 1:-1] + \
-              self.field[:, 1:-1, 2:, 1:-1] + \
-              self.field[:, 1:-1, :-2, 1:-1] + \
-              self.field[:, 1:-1, 1:-1, 2:] + \
-              self.field[:, 1:-1, 1:-1, :-2]
-        return sum
-    
+    def sum_weighted_neighbours(self, out: torch.Tensor) -> None:
+        """Isotropic 6-neighbor sum into a preallocated interior buffer."""
+        torch.add(self.field[:, 2:, 1:-1, 1:-1], self.field[:, :-2, 1:-1, 1:-1], out=out)
+        out.add_(self.field[:, 1:-1, 2:, 1:-1])
+        out.add_(self.field[:, 1:-1, :-2, 1:-1])
+        out.add_(self.field[:, 1:-1, 1:-1, 2:])
+        out.add_(self.field[:, 1:-1, 1:-1, :-2])
+
+    def _apply_chequerboard(self, increment: torch.Tensor) -> None:
+        """Zero the inactive colour and scale by omega, in-place."""
+        mask_zero = self._cb_inv if (self.iter % 2 == 0) else self.cb
+        increment.masked_fill_(mask_zero, 0)
+        increment.mul_(self.omega)
+
     def plot_stats(self, relative_error):
         """Default: No plotting output."""
-    
+
     def check_convergence(self, verbose, conv_crit, plot_interval):
         self.tau, relative_error = self.compute_metrics()
 
@@ -116,7 +128,7 @@ class SORSolver(ABC):
             # Print stats for slowest converging microstructure
             i = np.argmax(relative_error)
             print(f'Iter: {self.iter}, conv error: {abs(relative_error[i]):.3E}, tau: {self.tau[i]:.5f} (batch element {i})')
-            
+
         if (verbose == 'plot') and (self.iter % (100*plot_interval) == 0):
             self.plot_stats(relative_error)
 
@@ -154,7 +166,7 @@ class SORSolver(ABC):
 
         self.tau[self.tau == 0] = np.inf
         return True
-    
+
     # ---------------- main loop -------------------
     def solve(self, iter_limit=10000, verbose=True, conv_crit=1e-2, plot_interval=10):
         """
@@ -173,14 +185,18 @@ class SORSolver(ABC):
             self.tau_t = []
 
         with torch.no_grad():
+            increment = torch.empty(
+                (self.batch_size, self.Nx, self.Ny, self.Nz),
+                dtype=self.field.dtype,
+                device=self.device,
+            )
             start = timer()
             while not self.converged and self.iter < iter_limit:
                 self.apply_boundary_conditions()
-                increment = self.sum_weighted_neighbours()
+                self.sum_weighted_neighbours(increment)
                 increment /= self.factor
                 increment -= self.field[:, 1:-1, 1:-1, 1:-1]
-                # Multiply with checkerboard and over-relaxation factor
-                increment *= self.cb[self.iter % 2]
+                self._apply_chequerboard(increment)
                 self.field[:, 1:-1, 1:-1, 1:-1] += increment
                 self.iter += 1
 
@@ -205,7 +221,7 @@ class SORSolver(ABC):
         if img.ndim != 4:
             raise ValueError("expected [B, X, Y, Z]")
         return img
-    
+
     @staticmethod
     def _init_device(device) -> torch.device:
         # check device is available
@@ -218,14 +234,24 @@ class SORSolver(ABC):
             device = torch.device(device)
         return device
 
-    def _init_chequerboard(self, omega: float):
-        """Creates a chequerboard to ensure neighbouring pixels dont update,
-        which can cause instability"""
-        cb = np.zeros([self.Nx, self.Ny, self.Nz])
-        a, b, c = np.meshgrid(range(self.Nx), range(self.Ny), range(self.Nz), indexing='ij')
-        cb[(a + b + c) % 2 == 0] = 1
-        return [torch.tensor(omega*cb, dtype=self.precision, device=self.device),
-                torch.tensor(omega*(1-cb), dtype=self.precision, device=self.device)]
+    def _init_chequerboard(self):
+        """Bool chequerboard on device (True = even i+j+k), plus precomputed inverse.
+
+        Built in z-chunks to avoid host meshgrid / large int64 temporaries.
+        """
+        cb = torch.empty((self.Nx, self.Ny, self.Nz), dtype=torch.bool, device=self.device)
+        xy = (
+            torch.arange(self.Nx, device=self.device)[:, None]
+            + torch.arange(self.Ny, device=self.device)[None, :]
+        ) & 1
+        chunk = 64
+        for z0 in range(0, self.Nz, chunk):
+            z1 = min(self.Nz, z0 + chunk)
+            z = torch.arange(z0, z1, device=self.device)
+            cb[:, :, z0:z1] = ((xy.unsqueeze(-1) + z) & 1) == 0
+        cb_inv = torch.empty_like(cb)
+        torch.logical_not(cb, out=cb_inv)
+        return cb, cb_inv
 
     @staticmethod
     def _pad(img: torch.Tensor, vals=(0,0,0,0,0,0)) -> torch.Tensor:
@@ -246,14 +272,29 @@ class SORSolver(ABC):
         return img[:, c:-c, c:-c, c:-c]
     
     @staticmethod
-    def _sum_by_rolling(tensor: torch.Tensor):
-        """Sum up active neighbours and return new tensor"""
-        sum = torch.zeros_like(tensor)
-        # iterate through shifts in the spatial dimensions
-        for dim in range(1, 4):
-            for dr in [1, -1]:
-                sum += torch.roll(tensor, dr, dim)
-        return sum
+    def _neighbour_sum_from_padded(padded: torch.Tensor, out: torch.Tensor) -> None:
+        """6-neighbour sum from a +1-padded volume into an interior-sized buffer."""
+        torch.add(padded[:, 2:, 1:-1, 1:-1], padded[:, :-2, 1:-1, 1:-1], out=out)
+        out.add_(padded[:, 1:-1, 2:, 1:-1])
+        out.add_(padded[:, 1:-1, :-2, 1:-1])
+        out.add_(padded[:, 1:-1, 1:-1, 2:])
+        out.add_(padded[:, 1:-1, 1:-1, :-2])
+
+    @staticmethod
+    def _periodic_yz_neighbour_sum_from_padded(
+        padded: torch.Tensor, out: torch.Tensor
+    ) -> None:
+        """6-neighbour sum with X ghosts and periodic Y/Z boundaries."""
+        center = padded[:, 1:-1]
+        torch.add(padded[:, :-2], padded[:, 2:], out=out)
+        out[:, :, 1:].add_(center[:, :, :-1])
+        out[:, :, :-1].add_(center[:, :, 1:])
+        out[:, :, 0].add_(center[:, :, -1])
+        out[:, :, -1].add_(center[:, :, 0])
+        out[:, :, :, 1:].add_(center[:, :, :, :-1])
+        out[:, :, :, :-1].add_(center[:, :, :, 1:])
+        out[:, :, :, 0].add_(center[:, :, :, -1])
+        out[:, :, :, -1].add_(center[:, :, :, 0])
 
     def _end_simulation(self, iterations: int, verbose: bool):
         if self.converged:
@@ -290,7 +331,6 @@ class ThroughTransportSolver(SORSolver):
         for i in range(2):
             vec = torch.unsqueeze(vec, -1)
         vec = torch.unsqueeze(vec, 0)
-        vec = vec.repeat(self.batch_size, 1, self.Ny, self.Nz, )
         return self._pad(mask * vec, [2*self.top_bc, 2*self.bot_bc])
 
     def compute_metrics(self):
@@ -400,16 +440,17 @@ class Solver(ThroughTransportSolver):
                 "If you have more than one conductive phase, use the multi-phase solver.")
 
     def return_mask(self, img):
-        return img
+        return img.to(dtype=self.precision)
 
-    def init_conductive_neighbours(self, mask):
+    def init_conductive_neighbours(self, img, mask):
         """Saves the number of conductive neighbours for flux calculation"""
         img2 = self._pad(mask, [2, 2])
-        nn = self._sum_by_rolling(img2)
-        nn = self._crop(nn, 1)
+        nn = torch.empty_like(mask)
+        self._neighbour_sum_from_padded(img2, nn)
+        del img2
         # avoid div 0 errors
-        nn[mask == 0] = torch.inf
-        nn[nn == 0] = torch.inf
+        nn.masked_fill_(mask == 0, torch.inf)
+        nn.masked_fill_(nn == 0, torch.inf)
         return nn
 
     def vertical_flux(self) -> torch.Tensor:
@@ -459,9 +500,9 @@ class AnisotropicSolver(Solver):
         self.Kz = (dx/dz)**2
         super().__init__(img, omega=omega, D_0=D_0, device=device)
 
-    def init_conductive_neighbours(self, img):
+    def init_conductive_neighbours(self, img, mask):
         """Saves the number of conductive neighbours for flux calculation"""
-        img2 = self._pad(img, [2, 2])
+        img2 = self._pad(mask, [2, 2])
         nn = torch.zeros_like(img2, dtype=self.precision)
         # iterate through shifts in the spatial dimensions
         factor = [1.0, self.Ky, self.Kz]
@@ -469,16 +510,17 @@ class AnisotropicSolver(Solver):
             for dr in [1, -1]:
                 nn += torch.roll(img2, dr, dim)*factor[dim-1]
         nn = self._crop(nn, 1)
-        nn[img == 0] = torch.inf
+        nn[mask == 0] = torch.inf
         nn[nn == 0] = torch.inf
         return nn
-    
-    def sum_weighted_neighbours(self):
-        """Default: isotropic 6-neighbor SOR increment on interior."""
-        sum = self.field[:, 2:, 1:-1, 1:-1] + self.field[:, :-2, 1:-1, 1:-1] + \
-              self.Ky*(self.field[:, 1:-1, 2:, 1:-1] + self.field[:, 1:-1, :-2, 1:-1]) + \
-              self.Kz*(self.field[:, 1:-1, 1:-1, 2:] + self.field[:, 1:-1, 1:-1, :-2])
-        return sum
+
+    def sum_weighted_neighbours(self, out):
+        """Anisotropic 6-neighbor sum into a preallocated interior buffer."""
+        torch.add(self.field[:, 2:, 1:-1, 1:-1], self.field[:, :-2, 1:-1, 1:-1], out=out)
+        out.add_(self.field[:, 1:-1, 2:, 1:-1], alpha=self.Ky)
+        out.add_(self.field[:, 1:-1, :-2, 1:-1], alpha=self.Ky)
+        out.add_(self.field[:, 1:-1, 1:-1, 2:], alpha=self.Kz)
+        out.add_(self.field[:, 1:-1, 1:-1, :-2], alpha=self.Kz)
 
 
 class PeriodicSolver(Solver):
@@ -493,11 +535,12 @@ class PeriodicSolver(Solver):
         :class:`Solver`.
     """
 
-    def init_conductive_neighbours(self, img):
-        img2 = self._pad(img, [2, 2])[:, :, 1:-1, 1:-1]
-        nn = self._sum_by_rolling(img2)
-        nn = nn[:, 1:-1]
-        nn[img == 0] = torch.inf
+    def init_conductive_neighbours(self, img, mask):
+        padded = self._pad(mask, [2, 2])[:, :, 1:-1, 1:-1]
+        nn = torch.empty_like(mask)
+        self._periodic_yz_neighbour_sum_from_padded(padded, nn)
+        del padded
+        nn[mask == 0] = torch.inf
         nn[nn == 0] = torch.inf
         return nn
 
@@ -585,8 +628,8 @@ class MultiPhaseSolver(ThroughTransportSolver):
         hm[valid] = 2 * a[valid] * b[valid] / denom[valid]
         return hm
 
-    def init_conductive_neighbours(self, img):
-        diff_map = torch.zeros_like(img)
+    def init_conductive_neighbours(self, img, mask):
+        diff_map = torch.zeros(img.shape, dtype=self.precision, device=img.device)
         for phase, D_p in self.Ds.items():
             diff_map[img == phase] = D_p
 
@@ -605,15 +648,14 @@ class MultiPhaseSolver(ThroughTransportSolver):
         factor[:, -1] += self.D_x[:, -1, :, :]
         factor[factor == 0] = torch.inf
         return factor
-    
-    def sum_weighted_neighbours(self) -> torch.Tensor:
-        sum = self.field[:, 2:,  1:-1, 1:-1] * self.D_x[:, 1: , :, :] + \
-              self.field[:, :-2, 1:-1, 1:-1] * self.D_x[:, :-1, :, :] + \
-              self.field[:, 1:-1, 2:,  1:-1] * self.D_y[:, :, 1: , :] + \
-              self.field[:, 1:-1, :-2, 1:-1] * self.D_y[:, :, :-1, :] + \
-              self.field[:, 1:-1, 1:-1, 2: ] * self.D_z[:, :, :, 1: ] + \
-              self.field[:, 1:-1, 1:-1, :-2] * self.D_z[:, :, :, :-1]
-        return sum
+
+    def sum_weighted_neighbours(self, out) -> None:
+        torch.mul(self.field[:, 2:, 1:-1, 1:-1], self.D_x[:, 1:, :, :], out=out)
+        out.addcmul_(self.field[:, :-2, 1:-1, 1:-1], self.D_x[:, :-1, :, :])
+        out.addcmul_(self.field[:, 1:-1, 2:, 1:-1], self.D_y[:, :, 1:, :])
+        out.addcmul_(self.field[:, 1:-1, :-2, 1:-1], self.D_y[:, :, :-1, :])
+        out.addcmul_(self.field[:, 1:-1, 1:-1, 2:], self.D_z[:, :, :, 1:])
+        out.addcmul_(self.field[:, 1:-1, 1:-1, :-2], self.D_z[:, :, :, :-1])
 
     def vertical_flux(self):
         '''Calculates the vertical flux through the volume'''
@@ -626,8 +668,8 @@ class MultiPhaseSolver(ThroughTransportSolver):
 class PeriodicMultiPhaseSolver(MultiPhaseSolver):
     """Multi-phase solver with periodic boundary conditions in y and z."""
 
-    def init_conductive_neighbours(self, img):
-        diff_map = torch.zeros_like(img)
+    def init_conductive_neighbours(self, img, mask):
+        diff_map = torch.zeros(img.shape, dtype=self.precision, device=img.device)
         for phase, D_p in self.Ds.items():
             diff_map[img == phase] = D_p
 

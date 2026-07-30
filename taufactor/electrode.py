@@ -36,11 +36,11 @@ class ElectrodeSolver(SORSolver):
         self.dx = spacing or 1
         super().__init__(img, omega=omega, device=device)
         self.c_x = 0
+        # ElectrodeSolver never reads cpu_img after init (unlike through-transport)
+        self.cpu_img = None
 
     def return_mask(self, img):
-        mask = torch.zeros_like(img)
-        mask[img==self.cond_label] = 1
-        return mask
+        return (img == self.cond_label).to(dtype=self.precision)
 
     def init_field(self, mask):
         x = np.arange(self.Nx)+0.5
@@ -49,24 +49,28 @@ class ElectrodeSolver(SORSolver):
         for i in range(2):
             vec = torch.unsqueeze(vec, -1)
         vec = torch.unsqueeze(vec, 0)
-        vec = vec.repeat(self.batch_size, 1, self.Ny, self.Nz, )
         return self._pad(mask * vec, [self.left_bc * 2, 0])
 
-    def init_conductive_neighbours(self, img):
-        mask = self.return_mask(img)
-        img2 = self._pad(mask, [2, 0])
-        cond_nn = self._sum_by_rolling(img2)
-        cond_nn = self._crop(cond_nn, 1)
-        cond_nn[mask == 0] = torch.inf
+    def init_conductive_neighbours(self, img, mask):
+        padded = self._pad(mask, [2, 0])
+        cond_nn = torch.empty_like(mask)
+        self._neighbour_sum_from_padded(padded, cond_nn)
+        del padded
+        cond_nn.masked_fill_(mask == 0, torch.inf)
         return cond_nn
 
     def init_reactive_neighbours(self, img):
-        img2 = torch.zeros_like(img)
-        img2[img==self.reac_label] = 1
-        img2 = self._pad(img2)
-        reac_nn = self._sum_by_rolling(img2)
-        reac_nn = self._crop(reac_nn, 1)
-        reac_nn[img != self.cond_label] = 0.0
+        reac = (img == self.reac_label).to(dtype=self.precision)
+        padded = self._pad(reac)
+        del reac
+        reac_nn = torch.empty(
+            (self.batch_size, self.Nx, self.Ny, self.Nz),
+            dtype=self.precision,
+            device=self.device,
+        )
+        self._neighbour_sum_from_padded(padded, reac_nn)
+        del padded
+        reac_nn.masked_fill_(img != self.cond_label, 0)
         return reac_nn
 
     def compute_metrics(self):
@@ -136,21 +140,26 @@ class PeriodicElectrodeSolver(ElectrodeSolver):
     """
     Solver with periodic boundary conditions in y and z direction.
     """
-    def init_conductive_neighbours(self, img):
-        mask = self.return_mask(img)
-        img2 = self._pad(mask, [2, 0])[:, :, 1:-1, 1:-1]
-        cond_nn = self._sum_by_rolling(img2)
-        cond_nn = cond_nn[:, 1:-1]
-        cond_nn[mask == 0] = torch.inf
+    def init_conductive_neighbours(self, img, mask):
+        padded = self._pad(mask, [2, 0])[:, :, 1:-1, 1:-1]
+        cond_nn = torch.empty_like(mask)
+        self._periodic_yz_neighbour_sum_from_padded(padded, cond_nn)
+        del padded
+        cond_nn.masked_fill_(mask == 0, torch.inf)
         return cond_nn
 
     def init_reactive_neighbours(self, img):
-        img2 = torch.zeros_like(img)
-        img2[img==self.reac_label] = 1
-        img2 = self._pad(img2)[:, :, 1:-1, 1:-1]
-        reac_nn = self._sum_by_rolling(img2)
-        reac_nn = reac_nn[:, 1:-1]
-        reac_nn[img != self.cond_label] = 0.0
+        reac = (img == self.reac_label).to(dtype=self.precision)
+        padded = self._pad(reac)[:, :, 1:-1, 1:-1]
+        del reac
+        reac_nn = torch.empty(
+            (self.batch_size, self.Nx, self.Ny, self.Nz),
+            dtype=self.precision,
+            device=self.device,
+        )
+        self._periodic_yz_neighbour_sum_from_padded(padded, reac_nn)
+        del padded
+        reac_nn.masked_fill_(img != self.cond_label, 0)
         return reac_nn
 
     def apply_boundary_conditions(self):
@@ -181,12 +190,13 @@ class ImpedanceSolver(SORSolver):
             )
         
         torch_img = torch.tensor(self.cpu_img, dtype=self.precision, device=self.device)
-        self.mask = torch.zeros_like(torch_img)
-        self.mask[torch_img==self.cond_label] = 1
-        self.cond_nn, self.reac_nn = self.count_neighbours(torch_img, self.mask)
+        self.mask = torch_img == self.cond_label  # bool — 8x smaller than float32
+        mask_f = self.mask.to(self.precision)
+        self.cond_nn, self.reac_nn = self.count_neighbours(torch_img, mask_f)
+        del torch_img, mask_f
 
         # Volume fraction (slice-wise)
-        self.vol_x = torch.mean(self.mask, (0, 2, 3)).cpu().numpy()
+        self.vol_x = torch.mean(self.mask.to(self.precision), (0, 2, 3)).cpu().numpy()
         self.a_x = (torch.sum(self.reac_nn, (0, 2, 3)) / (self.Ny*self.Nz*self.dx)).cpu().numpy()
 
         # Define frequency, resistance and capacitance
@@ -207,14 +217,12 @@ class ImpedanceSolver(SORSolver):
         self.c_x = 0
 
     def return_mask(self, img):
-        mask = torch.zeros_like(img)
-        mask[img==self.cond_label] = 1
-        return mask
+        return (img == self.cond_label).to(dtype=self.precision)
 
     def init_field(self, img):
         return None
     
-    def init_conductive_neighbours(self, img):
+    def init_conductive_neighbours(self, img, mask):
         return None
 
     def init_field_internal(self, mask):
@@ -235,8 +243,8 @@ class ImpedanceSolver(SORSolver):
         for i in range(2):
             vec = torch.unsqueeze(vec, -1)
         vec = torch.unsqueeze(vec, 0)
-        vec = vec.repeat(self.batch_size, 1, self.Ny, self.Nz, )
-        return self._pad(mask * vec, [2 * self.left_bc, 0]).to(self.device)
+        mask_f = mask.to(vec.dtype) if mask.dtype == torch.bool else mask
+        return self._pad(mask_f * vec, [2 * self.left_bc, 0]).to(self.device)
 
     def count_neighbours(self, img, mask):
         """
@@ -251,16 +259,18 @@ class ImpedanceSolver(SORSolver):
         :rtype: cp.array
         """      
         # Conducting nearest neighbours
-        img2 = self._pad(mask, [2, 0])
-        cond_nn = self._sum_by_rolling(img2)
-        cond_nn = self._crop(cond_nn, 1)
+        padded = self._pad(mask, [2, 0])
+        cond_nn = torch.empty_like(mask)
+        self._neighbour_sum_from_padded(padded, cond_nn)
+        del padded
 
         # Capacitive nearest neighbours
-        img2 = torch.zeros_like(img)
-        img2[img==self.reac_label] = 1
-        img2 = self._pad(img2)
-        reac_nn = self._sum_by_rolling(img2)
-        reac_nn = self._crop(reac_nn, 1)
+        reac = (img == self.reac_label).to(dtype=self.precision)
+        padded = self._pad(reac)
+        del reac
+        reac_nn = torch.empty_like(mask)
+        self._neighbour_sum_from_padded(padded, reac_nn)
+        del padded
 
         # Masking conducting voxels
         cond_nn[mask == 0] = 0.0
@@ -293,6 +303,11 @@ class ImpedanceSolver(SORSolver):
         self.field = self.init_field_internal(self.mask)
 
         with torch.no_grad():
+            increment = torch.empty(
+                (self.batch_size, self.Nx, self.Ny, self.Nz),
+                dtype=self.field.dtype,
+                device=self.device,
+            )
             start = timer()
             for f in self.frequency:
                 self.frc = f*self.resistance*self.capacitance
@@ -303,7 +318,7 @@ class ImpedanceSolver(SORSolver):
                 # factor = (self.cond_nn + 2*self.reac_nn * 1j*self.frc/(2+1j*self.frc))**-1
                 # Variant 2: (N_i + S_i * j*r*frequency*c)**-1
                 factor = (self.cond_nn + self.reac_nn * 1j*self.frc)**-1
-                factor[self.mask == 0] = 0
+                factor.masked_fill_(~self.mask, 0)
                 factor[(self.cond_nn+self.reac_nn) == 0] = 0
 
                 self.impedance.append(0)
@@ -312,10 +327,10 @@ class ImpedanceSolver(SORSolver):
                 self.iter = 0
                 while not self.converged and self.iter < iter_limit:
                     self.apply_boundary_conditions()
-                    increment = self.sum_weighted_neighbours()
+                    self.sum_weighted_neighbours(increment)
                     increment *= factor
                     increment -= self.field[:, 1:-1, 1:-1, 1:-1]
-                    increment *= self.cb[self.iter % 2]
+                    self._apply_chequerboard(increment)
                     self.field[:, 1:-1, 1:-1, 1:-1] += increment
                     self.iter += 1
 

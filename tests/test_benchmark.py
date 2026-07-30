@@ -41,3 +41,5 @@ def test_run_benchmark_study_blocks_string_and_hook_match():
         write_file=False, devices=['cpu']
     )
     assert np.isclose(res1[0]["taufactor"], res2[0]["taufactor"])
+    for key in ("torch_init_max", "torch_init_cur", "torch_solve_max", "torch_solve_cur"):
+        assert res1[0][key] == 0.0
