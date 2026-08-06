@@ -1,55 +1,54 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath('..'))
+sys.path.insert(0, os.path.abspath(".."))
 
-project = 'taufactor'
+project = "taufactor"
 copyright = "2023, tldr group"
 author = "tldr group"
 
 extensions = [
-    'sphinx.ext.autodoc',
-    'sphinx.ext.mathjax',
-    'sphinx.ext.autosummary',
-    'sphinx.ext.napoleon',
-    'sphinx.ext.viewcode',
-    'myst_parser',
-    'nbsphinx',
+    "sphinx.ext.autodoc",
+    "sphinx.ext.mathjax",
+    "sphinx.ext.autosummary",
+    "sphinx.ext.napoleon",
+    "sphinx.ext.viewcode",
+    "myst_parser",
+    "nbsphinx",
 ]
 
 myst_enable_extensions = [
-    'amsmath',
-    'dollarmath',
+    "amsmath",
+    "dollarmath",
 ]
 
-nb_execution_mode = 'off'
-html_theme = 'sphinx_rtd_theme'
+nb_execution_mode = "off"
+html_theme = "sphinx_rtd_theme"
 autodoc_mock_imports = [
-    'matplotlib',
-    'pyvista',
-    'psutil',
-    'IPython',
-    'numpy',
-    'scipy',
-    'skimage',
-    'torch'
+    "matplotlib",
+    "psutil",
+    "IPython",
+    "numpy",
+    "scipy",
+    "skimage",
+    "torch",
 ]
 
-master_doc = 'index'
-exclude_patterns = ['paper/*', '_build', 'Thumbs.db', '.DS_Store']
+master_doc = "index"
+exclude_patterns = ["paper/*", "_build", "Thumbs.db", ".DS_Store"]
 
 autodoc_default_options = {
-    'members': True,
-    'undoc-members': True,
-    'special-members': '__init__',
-    'inherited-members': False,
+    "members": True,
+    "undoc-members": True,
+    "special-members": "__init__",
+    "inherited-members": False,
 }
 
 # The name of the Pygments (syntax highlighting) style to use.
-pygments_style = 'sphinx'
+pygments_style = "sphinx"
 
 # Napoleon settings
 napoleon_google_docstring = True
 napoleon_numpy_docstring = True
 autosummary_generate = True
-nbsphinx_execute = 'never'
+nbsphinx_execute = "never"
