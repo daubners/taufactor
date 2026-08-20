@@ -1,16 +1,14 @@
-"""Top-level package for TauFactor."""
+"""Solver implementations exposed by :mod:`taufactor`."""
 
-from .solvers import (
+from .classic import (
     AnisotropicSolver,
-    ElectrodeSolver,
-    ImpedanceSolver,
     MultiPhaseSolver,
-    PeriodicElectrodeSolver,
-    PeriodicImpedanceSolver,
     PeriodicMultiPhaseSolver,
     PeriodicSolver,
     Solver,
 )
+from .eis import ImpedanceSolver, PeriodicImpedanceSolver
+from .electrode import ElectrodeSolver, PeriodicElectrodeSolver
 
 __all__ = [
     'AnisotropicSolver',
