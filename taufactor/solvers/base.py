@@ -158,8 +158,7 @@ class SORSolver(ABC):
             self.old_tau = self.tau
             return False
 
-        tau_error = np.max(np.abs(self.tau - self.old_tau))
-        if not tau_error < 2e-3:
+        if not np.allclose(self.tau, self.old_tau, rtol=2e-3, atol=1e-3):
             self.old_tau = self.tau
             return False
 
