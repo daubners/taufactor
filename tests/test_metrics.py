@@ -5,7 +5,7 @@ import pytest
 
 from taufactor.metrics import (
     estimate_3d_psd_saltykov,
-    extract_through_feature,
+    extract_connected_network,
     interfacial_areas,
     particle_size_distribution,
     particle_size_distribution_2d,
@@ -74,12 +74,12 @@ def test_volume_fraction_on_multi_cubes():
     assert (vf['1'], vf['2'], vf['3'], sum) == (0.125, 0.125, 0.0625, 1.0)
 
 
-def test_extract_through_feature_finds_spanning_phase_with_periodic_labeling():
+def test_extract_connected_network_finds_spanning_phase_with_periodic_labeling():
     img = np.zeros((3, 3, 3), dtype=np.uint8)
     img[0, 1, 1] = 1
     img[-1, 1, 1] = 1
 
-    result = extract_through_feature(
+    result = extract_connected_network(
         img,
         1,
         "x",
@@ -92,12 +92,12 @@ def test_extract_through_feature_finds_spanning_phase_with_periodic_labeling():
     assert np.array_equal(result[1]["disconnected_volume_fraction"], np.zeros(3))
 
 
-def test_extract_through_feature_combines_phase_labels_into_one_network():
+def test_extract_connected_network_combines_phase_labels_into_one_network():
     img = np.zeros((3, 3, 3), dtype=np.uint8)
     img[:, 1, 1] = (1, 2, 1)
     img[1, 0, 0] = 2
 
-    result = extract_through_feature(img, phase_labels=[1, 2], axis="x")
+    result = extract_connected_network(img, phase_labels=[1, 2], axis="x")
     expected_mask = np.zeros_like(img, dtype=bool)
     expected_mask[:, 1, 1] = True
 
@@ -106,8 +106,8 @@ def test_extract_through_feature_combines_phase_labels_into_one_network():
     assert np.array_equal(result[1]["disconnected_volume_fraction"], [0, 1 / 9, 0])
 
 
-def test_extract_through_feature_returns_no_result_for_absent_phase():
-    result = extract_through_feature(np.zeros((3, 3, 3)), phase_labels=1, axis="x")
+def test_extract_connected_network_returns_no_result_for_absent_phase():
+    result = extract_connected_network(np.zeros((3, 3, 3)), phase_labels=1, axis="x")
 
     assert result == {}
 

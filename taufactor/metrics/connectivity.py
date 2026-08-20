@@ -166,7 +166,7 @@ def find_front_labels(labelled_array, axis):
     return first_slice_labels
 
 
-def extract_through_feature(
+def extract_connected_network(
     array,
     phase_labels,
     axis,
@@ -175,11 +175,13 @@ def extract_through_feature(
     open_end=True,
     debug=False
 ):
-    """Extract spanning features and their fractions for a phase.
+    """Extract a connected network and connectivity metrics for a phase.
 
     For the given ``phase_labels``, labels connected components in their union at one
     or more neighbor connectivities, detects which labels span the domain
-    along ``axis``, and returns connectivity results keyed by neighbourhood.
+    along ``axis``, and returns connectivity results keyed by neighbourhood. With
+    ``open_end=True``, the network percolates along ``axis``; otherwise it is
+    connected to the first face along that axis.
 
     Args:
         array (numpy.ndarray): 3D segmented image.
@@ -190,6 +192,8 @@ def extract_through_feature(
             ``(True, False, False)``). Defaults to ``[False, False, False]``.
         connectivity (int | None, optional): If ``1``, ``2``, or ``3``, evaluate that
             connectivity only. If ``None``, evaluates all (1, 2, 3). Defaults to ``1``.
+        open_end (bool, optional): If ``True``, returns the network percolating along
+            ``axis``; if ``False``, returns the network connected to the inlet face.
         debug (bool, optional): Print simple diagnostics. Defaults to ``False``.
 
     Returns:

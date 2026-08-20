@@ -14,7 +14,7 @@ try:
 except ImportError:
     torch = None
 
-from .metrics import extract_through_feature
+from .metrics import extract_connected_network
 
 
 class SORSolver(ABC):
@@ -361,7 +361,7 @@ class ThroughTransportSolver(SORSolver):
         for b in range(self.batch_size):
             if (fl_min[b] == 0) or (fl_max[b] == 0) or (mean_fl[b] == 0):
                 conductive_mask = np.isin(self.cpu_img[b], self.conductive_labels)
-                connectivity = extract_through_feature(conductive_mask, 1, 'x')
+                connectivity = extract_connected_network(conductive_mask, 1, 'x')
                 if not connectivity or connectivity[1]['connected_fraction'] == 0:
                     print(f"Warning: batch element {b} has no percolating path!")
                     relative_error[b] = 0 # Set to converged
