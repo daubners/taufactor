@@ -1,5 +1,20 @@
 """Shared SOR solver base class."""
 
+from __future__ import annotations
+
+import warnings
+from abc import ABC, abstractmethod
+from timeit import default_timer as timer
+
+import matplotlib.pyplot as plt
+import numpy as np
+from IPython.display import clear_output
+
+try:
+    import torch
+except ImportError:
+    torch = None
+
 
 class SORSolver(ABC):
     """

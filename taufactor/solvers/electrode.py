@@ -1,5 +1,18 @@
 """Electrode tortuosity solvers."""
 
+import matplotlib.pyplot as plt
+import numpy as np
+from IPython.display import clear_output
+
+try:
+    import torch
+except ImportError:
+    torch = None
+
+from ..utils import compute_impedance_batched
+from .base import SORSolver
+
+
 class ElectrodeSolver(SORSolver):
     """
     Default solver for two phase images. Once solve method is

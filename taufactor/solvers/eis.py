@@ -1,5 +1,19 @@
 """Electrochemical impedance spectroscopy solvers."""
 
+from timeit import default_timer as timer
+
+import matplotlib.pyplot as plt
+import numpy as np
+from IPython.display import clear_output
+
+try:
+    import torch
+except ImportError:
+    torch = None
+
+from ..utils import compute_impedance
+from .base import SORSolver
+
 
 class ImpedanceSolver(SORSolver):
     """
