@@ -233,6 +233,7 @@ def extract_connected_network(
 
     results = {}
     transverse_axes = tuple(index for index in range(array.ndim) if index != axis_index)
+    print(transverse_axes)
 
     # Compute the largest interconnected features depending on given connectivity
     for conn in connectivities_to_loop_over:
@@ -257,12 +258,14 @@ def extract_connected_network(
         else:
             through_labels = find_front_labels(labeled_mask,axis)
         spanning_network = np.isin(labeled_mask, list(through_labels))
+        volume_fraction_all = phase_mask.mean(axis=transverse_axes)
+        volume_fraction_conn = spanning_network.mean(axis=transverse_axes)
 
         results[conn] = {
             "connected_mask": spanning_network,
             "connected_fraction": spanning_network.mean() / vol_phase,
-            "disconnected_volume_fraction": (
-                phase_mask.mean(axis=transverse_axes) - spanning_network.mean(axis=transverse_axes)
-            ),
+            "spatial_vol_frac_all": volume_fraction_all,
+            "spatial_vol_frac_connected": volume_fraction_conn,
+            "spatial_vol_frac_disconnected": volume_fraction_all - volume_fraction_conn,
         }
     return results
