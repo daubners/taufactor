@@ -233,7 +233,6 @@ def extract_connected_network(
 
     results = {}
     transverse_axes = tuple(index for index in range(array.ndim) if index != axis_index)
-    print(transverse_axes)
 
     # Compute the largest interconnected features depending on given connectivity
     for conn in connectivities_to_loop_over:

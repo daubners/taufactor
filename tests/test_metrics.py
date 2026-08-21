@@ -89,7 +89,7 @@ def test_extract_connected_network_finds_spanning_phase_with_periodic_labeling()
 
     assert np.array_equal(result[1]["connected_mask"], img == 1)
     assert result[1]["connected_fraction"] == 1
-    assert np.array_equal(result[1]["disconnected_volume_fraction"], np.zeros(3))
+    assert np.array_equal(result[1]["spatial_vol_frac_disconnected"], np.zeros(3))
 
 
 def test_extract_connected_network_combines_phase_labels_into_one_network():
@@ -103,7 +103,7 @@ def test_extract_connected_network_combines_phase_labels_into_one_network():
 
     assert np.array_equal(result[1]["connected_mask"], expected_mask)
     assert result[1]["connected_fraction"] == 0.75
-    assert np.array_equal(result[1]["disconnected_volume_fraction"], [0, 1 / 9, 0])
+    assert np.array_equal(result[1]["spatial_vol_frac_disconnected"], [0, 1 / 9, 0])
 
 
 def test_extract_connected_network_returns_no_result_for_absent_phase():
