@@ -15,6 +15,8 @@ try:
 except ImportError:
     torch = None
 
+from ..metrics import extract_connected_network
+
 
 class SORSolver(ABC):
     """
@@ -25,6 +27,9 @@ class SORSolver(ABC):
             oemga: Over-relaxation factor for SOR scheme.
             device: The device to perform computations ('cpu' or 'cuda').
     """
+    connectivity_periodic = (False, False, False)
+    connectivity_open_end = True
+
     def __init__(self, img: np.ndarray, omega: float | None = None, precision=None, device='cuda'):
         if torch is None:
             raise ImportError(
@@ -36,27 +41,29 @@ class SORSolver(ABC):
         self.device = self._init_device(device)
         self.precision = precision or torch.float
 
+        # Compute volume fraction of conductive phases and extract connected
+        # transport network for each batch element
+        self.vol_x, self.conn_vol_x, mask  = self._analyse_phases_and_connectivity(self.cpu_img)
+
         # Overrelaxation factor for SOR
         if omega is None:
-            omega = 2 - torch.pi / (1.5 * self.Nx)
+            omega = 2 - torch.pi / (1.3 * self.Nx)
         self.omega = float(omega)
 
         # Labels as uint8 on device (4x smaller than float32) to cut init peak VRAM
         torch_img = torch.as_tensor(self.cpu_img, device=self.device)
         if torch_img.dtype != torch.uint8:
             torch_img = torch_img.to(torch.uint8)
-        mask = self.return_mask(torch_img)
-        if mask.dtype not in (torch.float16, torch.float32, torch.float64):
-            mask = mask.to(dtype=self.precision)
-        vol_x = torch.mean(mask, (2, 3))  # volume fraction
 
         # Reactive neighbours before field so we can free torch_img early
-        reac_nn = self.init_reactive_neighbours(torch_img)
+        reac_nn = self.init_reactive_neighbours(torch_img, mask)
         self.factor = self.init_conductive_neighbours(torch_img, mask)
         del torch_img
         if reac_nn is not None:
             a_x = (torch.sum(reac_nn, (2, 3)) / (self.Ny * self.Nz * self.dx))
-            k_0 = torch.mean(vol_x, 1) / torch.mean(a_x * self.dx, 1) / self.Nx**2
+            conn_vf = torch.as_tensor(np.mean(self.conn_vol_x, axis=1),
+                                      dtype=self.precision, device=self.device)
+            k_0 = conn_vf / torch.mean(a_x * self.dx, 1) / self.Nx**2
             reac_nn.mul_(k_0[:, None, None, None])
             self.factor.add_(reac_nn)
             del reac_nn
@@ -65,8 +72,7 @@ class SORSolver(ABC):
             self.k_0 = k_0.cpu().numpy()
 
         self.field = self.init_field(mask)
-        self.vol_x = vol_x.cpu().numpy()
-        del mask, vol_x
+        del mask
 
         self.cb, self._cb_inv = self._init_chequerboard()
 
@@ -80,11 +86,7 @@ class SORSolver(ABC):
 
     # ---------------- required hook ----------------
     @abstractmethod
-    def return_mask(self, img: torch.Tensor) -> torch.Tensor:
-        """Return conductive mask."""
-    
-    @abstractmethod
-    def init_field(self, img: torch.Tensor) -> torch.Tensor:
+    def init_field(self, mask: torch.Tensor) -> torch.Tensor:
         """Return initial padded field [bs,Nx+2,Ny+2,Nz+2]."""
 
     @abstractmethod 
@@ -96,7 +98,7 @@ class SORSolver(ABC):
         """Defines tau and relative error"""
 
     # ---------------- optional hooks --------------
-    def init_reactive_neighbours(self, img: torch.Tensor) -> torch.Tensor:
+    def init_reactive_neighbours(self, img: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """S_i: amount of reactive neighbours (reac_nn)"""
         return None
 
@@ -231,6 +233,30 @@ class SORSolver(ABC):
         else:
             device = torch.device(device)
         return device
+
+    def _analyse_phases_and_connectivity(self, img):
+        """Return spatial volume fraction of conductive phase(s) and connected transport network."""
+        vol_x = np.zeros(img.shape[:2])
+        conn_vol_x = np.zeros(img.shape[:2])
+        mask = np.zeros_like(img, dtype=bool)
+        self.percolates = np.zeros(self.batch_size, dtype=bool)
+
+        for b, batch_img in enumerate(img):
+            conn = extract_connected_network(
+                batch_img, self.conductive_labels, "x",
+                periodic=self.connectivity_periodic,
+                connectivity=1,
+                open_end=self.connectivity_open_end,
+            )
+            if conn:
+                mask[b] = conn[1]["connected_mask"]
+                vol_x[b] = conn[1]["spatial_vol_frac_all"]
+                conn_vol_x[b] = conn[1]["spatial_vol_frac_connected"]
+                self.percolates[b] = mask[b].any()
+
+        return vol_x, conn_vol_x, torch.as_tensor(
+            mask, dtype=self.precision, device=self.device
+        )
 
     def _init_chequerboard(self):
         """Bool chequerboard on device (True = even i+j+k), plus precomputed inverse.

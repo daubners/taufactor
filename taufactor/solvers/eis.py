@@ -20,12 +20,13 @@ class ImpedanceSolver(SORSolver):
     Electrode Solver - solves the electrode tortuosity factor system (migration and capacitive current between current collector and solid/electrolyte interface)
     Once solve method is called, tau, D_eff and D_rel are available as attributes.
     """
+    connectivity_open_end = False
 
     def __init__(self, img, conductive_label=1, reactive_label=0, \
                  omega=None, spacing=None, mode='tau_e', device='cuda'):
         self.left_bc = 1.0
         self.electrode_bc = 0.0
-        self.cond_label=conductive_label
+        self.conductive_labels = [conductive_label]
         self.reac_label=reactive_label
         self.dx = spacing or 1
         super().__init__(img, omega=omega, device=device, precision=torch.double)
@@ -35,14 +36,13 @@ class ImpedanceSolver(SORSolver):
                 "TODO: vectorize impedance solver for batching."
             )
         
-        torch_img = torch.tensor(self.cpu_img, dtype=self.precision, device=self.device)
-        self.mask = torch_img == self.cond_label  # bool — 8x smaller than float32
+        torch_img = torch.as_tensor(self.cpu_img, device=self.device)
         mask_f = self.mask.to(self.precision)
         self.cond_nn, self.reac_nn = self.count_neighbours(torch_img, mask_f)
         del torch_img, mask_f
 
         # Volume fraction (slice-wise)
-        self.vol_x = torch.mean(self.mask.to(self.precision), (0, 2, 3)).cpu().numpy()
+        self.vol_x = self.vol_x[0]
         self.a_x = (torch.sum(self.reac_nn, (0, 2, 3)) / (self.Ny*self.Nz*self.dx)).cpu().numpy()
 
         # Define frequency, resistance and capacitance
@@ -62,11 +62,8 @@ class ImpedanceSolver(SORSolver):
         self.sum_iter = 0
         self.c_x = 0
 
-    def return_mask(self, img):
-        return (img == self.cond_label).to(dtype=self.precision)
-
-    def init_field(self, img):
-        return None
+    def init_field(self, mask):
+        self.mask = mask.to(dtype=torch.bool)
     
     def init_conductive_neighbours(self, img, mask):
         return None
@@ -264,6 +261,8 @@ class PeriodicImpedanceSolver(ImpedanceSolver):
     """
     Solver with periodic boundary conditions in y and z direction.
     """
+    connectivity_periodic = (False, True, True)
+
     def count_neighbours(self, img, mask):
         img2 = self._pad(mask, [2, 0])[:, :, 1:-1, 1:-1]
         cond_nn = torch.zeros_like(img2)

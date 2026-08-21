@@ -18,6 +18,8 @@ class ElectrodeSolver(SORSolver):
     Default solver for two phase images. Once solve method is
     called, tau, D_eff and D_rel are available as attributes.
     """
+    connectivity_open_end = False
+
     def __init__(self, img, conductive_label=1, reactive_label=0, \
                  omega=None, spacing=None, device='cuda'):
         """
@@ -31,16 +33,13 @@ class ElectrodeSolver(SORSolver):
         """
         self.left_bc = 1.0
         self.electrode_bc = 0.0
-        self.cond_label=conductive_label
+        self.conductive_labels = [conductive_label]
         self.reac_label=reactive_label
         self.dx = spacing or 1
         super().__init__(img, omega=omega, device=device)
         self.c_x = 0
         # ElectrodeSolver never reads cpu_img after init (unlike through-transport)
         self.cpu_img = None
-
-    def return_mask(self, img):
-        return (img == self.cond_label).to(dtype=self.precision)
 
     def init_field(self, mask):
         x = np.arange(self.Nx)+0.5
@@ -59,7 +58,7 @@ class ElectrodeSolver(SORSolver):
         cond_nn.masked_fill_(mask == 0, torch.inf)
         return cond_nn
 
-    def init_reactive_neighbours(self, img):
+    def init_reactive_neighbours(self, img, mask):
         reac = (img == self.reac_label).to(dtype=self.precision)
         padded = self._pad(reac)
         del reac
@@ -70,13 +69,13 @@ class ElectrodeSolver(SORSolver):
         )
         self._neighbour_sum_from_padded(padded, reac_nn)
         del padded
-        reac_nn.masked_fill_(img != self.cond_label, 0)
+        reac_nn.masked_fill_(mask == 0, 0)
         return reac_nn
 
     def compute_metrics(self):
         c_x = torch.mean(self.field[:, 1:-1, 1:-1, 1:-1], (2, 3)).cpu().numpy()
-        c_x = np.divide(c_x, self.vol_x, out=np.zeros_like(self.vol_x),
-                        where=self.vol_x != 0)
+        c_x = np.divide(c_x, self.conn_vol_x, out=np.zeros_like(self.conn_vol_x),
+                        where=self.conn_vol_x != 0)
         # Largest deviation to previous check as conv crit
         relative_error = np.max(np.abs(c_x-self.c_x), axis=1)
         self.c_x = c_x
@@ -87,8 +86,8 @@ class ElectrodeSolver(SORSolver):
         fluxes[self.field[:, :-2, 1:-1, 1:-1] == 0] = 0
         fluxes = torch.mean(fluxes, (2, 3)).cpu().numpy()
         fluxes_1d = np.concatenate((2*(self.left_bc-c_x[:,:1]), (-c_x[:,1:]+c_x[:,:-1])), axis=1)
-        fluxes_1d[:,1:][self.vol_x[:,1:]==0] = 0
-        fluxes_1d[:,1:][self.vol_x[:,:-1]==0] = 0
+        fluxes_1d[:,1:][self.conn_vol_x[:,1:]==0] = 0
+        fluxes_1d[:,1:][self.conn_vol_x[:,:-1]==0] = 0
 
         # Make some quantities visible to user
         # Porosity at voxel faces (arithmetic mean between voxel centers)
@@ -140,6 +139,8 @@ class PeriodicElectrodeSolver(ElectrodeSolver):
     """
     Solver with periodic boundary conditions in y and z direction.
     """
+    connectivity_periodic = (False, True, True)
+
     def init_conductive_neighbours(self, img, mask):
         padded = self._pad(mask, [2, 0])[:, :, 1:-1, 1:-1]
         cond_nn = torch.empty_like(mask)
@@ -148,7 +149,7 @@ class PeriodicElectrodeSolver(ElectrodeSolver):
         cond_nn.masked_fill_(mask == 0, torch.inf)
         return cond_nn
 
-    def init_reactive_neighbours(self, img):
+    def init_reactive_neighbours(self, img, mask):
         reac = (img == self.reac_label).to(dtype=self.precision)
         padded = self._pad(reac)[:, :, 1:-1, 1:-1]
         del reac
@@ -159,7 +160,7 @@ class PeriodicElectrodeSolver(ElectrodeSolver):
         )
         self._periodic_yz_neighbour_sum_from_padded(padded, reac_nn)
         del padded
-        reac_nn.masked_fill_(img != self.cond_label, 0)
+        reac_nn.masked_fill_(mask == 0, 0)
         return reac_nn
 
     def apply_boundary_conditions(self):

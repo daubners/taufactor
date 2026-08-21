@@ -11,7 +11,6 @@ try:
 except ImportError:
     torch = None
 
-from ..metrics import extract_connected_network
 from .base import SORSolver
 
 
@@ -50,26 +49,23 @@ class ThroughTransportSolver(SORSolver):
             out=np.full_like(D_rel, np.nan), where=D_rel != 0)
 
         c_x = torch.mean(self.field[:, 1:-1, 1:-1, 1:-1], (2, 3)).cpu().numpy()
-        c_x = np.divide(c_x, self.vol_x, out=np.zeros_like(self.vol_x),
-                        where=self.vol_x != 0)
+        c_x = np.divide(c_x, self.conn_vol_x, out=np.zeros_like(self.conn_vol_x),
+                        where=self.conn_vol_x != 0)
         self.c_x = c_x
         flux_from_c = c_x[:,1:] - c_x[:,:-1]
-        flux_from_c[:,:][self.vol_x[:,1:]==0] = 0
-        flux_from_c[:,:][self.vol_x[:,:-1]==0] = 0
+        flux_from_c[:,:][self.conn_vol_x[:,1:]==0] = 0
+        flux_from_c[:,:][self.conn_vol_x[:,:-1]==0] = 0
         eps = 0.5*(self.vol_x[:,:-1] + self.vol_x[:,1:])
         self.tau_x = np.divide(eps * flux_from_c, self.flux_1d,
             out=np.full_like(flux_from_c, np.nan), where=self.flux_1d != 0)
 
         for b in range(self.batch_size):
-            if (fl_min[b] == 0) or (fl_max[b] == 0) or (mean_fl[b] == 0):
-                conductive_mask = np.isin(self.cpu_img[b], self.conductive_labels)
-                connectivity = extract_connected_network(conductive_mask, 1, 'x')
-                if not connectivity or connectivity[1]['connected_fraction'] == 0:
-                    print(f"Warning: batch element {b} has no percolating path!")
-                    relative_error[b] = 0 # Set to converged
-                    D_rel[b] = 0
-                    tau[b] = 0
-                    self.tau_x[b,:] = 0
+            if not self.percolates[b]:
+                print(f"Warning: batch element {b} has no percolating path!")
+                relative_error[b] = 0 # Set to converged
+                D_rel[b] = 0
+                tau[b] = 0
+                self.tau_x[b,:] = 0
         # If NaN values occuring set to converged to stop
         relative_error[np.isnan(mean_fl)] = 0
         self.D_eff = self.D_0*D_rel
@@ -140,9 +136,6 @@ class Solver(ThroughTransportSolver):
                 "0 for non-conductive and 1 for conductive phase. "
                 f"Your image has the following labels: {np.unique(img)}. "
                 "If you have more than one conductive phase, use the multi-phase solver.")
-
-    def return_mask(self, img):
-        return img.to(dtype=self.precision)
 
     def init_conductive_neighbours(self, img, mask):
         """Saves the number of conductive neighbours for flux calculation"""
@@ -236,6 +229,7 @@ class PeriodicSolver(Solver):
         Overrides ``init_nn`` and ``apply_boundary_conditions`` from
         :class:`Solver`.
     """
+    connectivity_periodic = (False, True, True)
 
     def init_conductive_neighbours(self, img, mask):
         padded = self._pad(mask, [2, 2])[:, :, 1:-1, 1:-1]
@@ -315,12 +309,6 @@ class MultiPhaseSolver(ThroughTransportSolver):
         }
         self.D_0 = D_scaling
         self.D_mean = np.sum([self.VF[z] * self.Ds.get(z, 0.0) for z in self.VF], axis=0)
-
-    def return_mask(self, img):
-        if len(self.conductive_labels) == 0:
-            return torch.zeros_like(img)
-        conductive = torch.tensor(self.conductive_labels, dtype=self.precision, device=self.device)
-        return torch.isin(img, conductive).to(self.precision)
     
     def _harmonic_mean(self, a, b):
         """Calculate the harmonic mean of two tensors, avoiding div-by-zero."""
@@ -334,6 +322,7 @@ class MultiPhaseSolver(ThroughTransportSolver):
         diff_map = torch.zeros(img.shape, dtype=self.precision, device=img.device)
         for phase, D_p in self.Ds.items():
             diff_map[img == phase] = D_p
+        diff_map.mul_(mask)
 
         diff_map = self._pad(diff_map)
         diff_map[:, 0] = diff_map[:, 1]
@@ -369,11 +358,13 @@ class MultiPhaseSolver(ThroughTransportSolver):
 
 class PeriodicMultiPhaseSolver(MultiPhaseSolver):
     """Multi-phase solver with periodic boundary conditions in y and z."""
+    connectivity_periodic = (False, True, True)
 
     def init_conductive_neighbours(self, img, mask):
         diff_map = torch.zeros(img.shape, dtype=self.precision, device=img.device)
         for phase, D_p in self.Ds.items():
             diff_map[img == phase] = D_p
+        diff_map.mul_(mask)
 
         diff_map = self._pad(diff_map)
         # Dirichlet in x direction, periodic in y and z
