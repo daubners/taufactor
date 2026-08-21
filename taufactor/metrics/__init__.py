@@ -1,6 +1,6 @@
 from .base import triple_phase_boundary, volume_fraction
 from .connectivity import (
-    extract_through_feature,
+    extract_connected_network,
     find_front_labels,
     find_spanning_labels,
     label_periodic,
@@ -18,7 +18,7 @@ from .surfaces import interfacial_areas, specific_surface_area
 
 __all__ = [
     "estimate_3d_psd_saltykov",
-    "extract_through_feature",
+    "extract_connected_network",
     "find_front_labels",
     "find_spanning_labels",
     "interfacial_areas",

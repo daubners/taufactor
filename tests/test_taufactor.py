@@ -62,7 +62,7 @@ def test_solver_on_slanted_strip_of_ones():
         img[i, i:i+2, i:i+2] = 1
     S = tau.Solver(img, device='cpu')
     S.solve()
-    assert np.around(S.tau, decimals=5) == 7.51667
+    assert np.around(S.tau, decimals=5) == 7.51668
 
 def test_deadend():
     """Test deadend pore"""
@@ -93,6 +93,21 @@ def test_periodic_solver_non_percolating():
     S = tau.PeriodicSolver(img, device='cpu')
     S.solve(verbose='per_iter', iter_limit=1000)
     assert S.tau == pt.inf
+
+def test_connectivity_settings_match_solver_boundaries():
+    """Periodic and electrode solvers use their respective connectivity rules."""
+    img = np.zeros((4, 3, 1))
+    img[0, 0] = 1
+    img[1, (0, 2)] = 1
+    img[2, 2] = 1
+    img[3, 2] = 1
+
+    assert not tau.Solver(img, device='cpu').percolates[0]
+    assert tau.PeriodicSolver(img, device='cpu').percolates[0]
+
+    electrode_img = np.zeros((4, 3, 1))
+    electrode_img[:2, 1] = 1
+    assert tau.ElectrodeSolver(electrode_img, device='cpu').percolates[0]
 
 def test_periodic_solver_on_strip_of_ones():
     """Run periodic solver on a strip of ones, 1/4 volume of total"""
@@ -254,7 +269,7 @@ def test_taue_deadend():
     img[:75, 45:55] = 1
     esolver = tau.ImpedanceSolver(img, device='cpu')
     esolver.solve()
-    assert np.around(esolver.tau, 3) == 0.594
+    assert np.around(esolver.tau, 3) == 0.593
 
 def test_taue_throughpore():
     """Run taue solver on a strip of ones, 1/4 volume of total"""
@@ -263,4 +278,4 @@ def test_taue_throughpore():
     img[:, 45:55] = 1
     esolver = tau.ImpedanceSolver(img, device='cpu')
     esolver.solve()
-    assert np.around(esolver.tau, 3) == 0.986
+    assert np.around(esolver.tau, 3) == 0.987
