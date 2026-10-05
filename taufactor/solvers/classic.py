@@ -18,13 +18,36 @@ class ThroughTransportSolver(SORSolver):
 
     Uses Dirichlet boundary conditions in x to calculate tortuosity from
     staedy-state fluxes.
+
+    ``init_method`` may be ``'linear'`` (default), ``'slice_resistance'``, or
+    ``'geodesic_resistance'``. The geodesic method is unavailable for solvers
+    with periodic transverse boundaries.
     """
-    def __init__(self, img, omega = None, precision=None, device='cuda'):
+    def __init__(self, img, omega=None, precision=None, device='cuda', init_method='linear'):
+        if init_method not in {'linear', 'slice_resistance', 'geodesic_resistance'}:
+            raise ValueError(
+                "init_method must be 'linear', 'slice_resistance', or "
+                "'geodesic_resistance'"
+            )
         self.top_bc, self.bot_bc = (-0.5, 0.5) # boundary conditions
+        self.init_method = init_method
         super().__init__(img, omega, precision, device)
 
     def init_field(self, mask):
-        """Sets an initial linear field across the volume"""
+        """Set the requested initial field across the transport network."""
+        if self.init_method == 'linear':
+            return self._init_linear_field(mask)
+        if self.init_method == 'slice_resistance':
+            return self._init_slice_resistance_field(mask)
+        if any(self.connectivity_periodic):
+            raise ValueError(
+                "geodesic_resistance is not valid with periodic boundaries; "
+                "use slice_resistance or linear"
+            )
+        return self._init_geodesic_resistance_field(mask)
+
+    def _init_linear_field(self, mask):
+        """Set the original cell-centred linear initial field."""
         sh = 1 / (2 * self.Nx)
         vec = torch.linspace(self.top_bc + sh, self.bot_bc - sh, self.Nx,
                              dtype=self.precision, device=self.device)
@@ -32,6 +55,77 @@ class ThroughTransportSolver(SORSolver):
             vec = torch.unsqueeze(vec, -1)
         vec = torch.unsqueeze(vec, 0)
         return self._pad(mask * vec, [2*self.top_bc, 2*self.bot_bc])
+
+    def _init_slice_resistance_field(self, mask):
+        """Set a one-dimensional series-resistance initial field."""
+        if hasattr(self, 'Ds'):
+            diffusivity = torch.zeros_like(mask)
+            labels = torch.as_tensor(self.cpu_img, device=self.device)
+            for label, value in self.Ds.items():
+                diffusivity[labels == label] = value
+            conductance = torch.sum(mask * diffusivity, dim=(2, 3))
+        else:
+            conductance = torch.sum(mask, dim=(2, 3))
+
+        resistance = torch.where(
+            conductance > 0, conductance.reciprocal(), torch.zeros_like(conductance)
+        )
+        total_resistance = torch.sum(resistance, dim=1, keepdim=True)
+        centre_resistance = torch.cumsum(resistance, dim=1) - 0.5 * resistance
+        coordinate = torch.where(
+            total_resistance > 0,
+            centre_resistance / total_resistance,
+            torch.zeros_like(centre_resistance),
+        )
+        values = self.top_bc + (self.bot_bc - self.top_bc) * coordinate
+        return self._pad(mask * values[:, :, None, None], [2*self.top_bc, 2*self.bot_bc])
+
+    def _init_geodesic_resistance_field(self, mask):
+        """Set a 6-neighbour geodesic resistance initial field."""
+        from skimage.graph import MCP_Geometric
+
+        mask_np = mask.detach().cpu().numpy().astype(bool, copy=False)
+        sampling = (1.0, 1.0, 1.0)
+        if hasattr(self, 'Ky') and hasattr(self, 'Kz'):
+            sampling = (1.0, 1.0 / np.sqrt(self.Ky), 1.0 / np.sqrt(self.Kz))
+
+        field_np = np.zeros(mask_np.shape, dtype=np.float32)
+        for batch, connected in enumerate(mask_np):
+            if not connected.any():
+                continue
+
+            cost = np.full(connected.shape, np.inf, dtype=np.float32)
+            if hasattr(self, 'Ds'):
+                for label, diffusivity in self.Ds.items():
+                    if diffusivity > 0:
+                        cost[self.cpu_img[batch] == label] = 1 / diffusivity
+            else:
+                cost[connected] = 1
+            cost[~connected] = np.inf
+
+            def distance_from_face(face, cost=cost):
+                costs = np.full((self.Nx + 2, self.Ny, self.Nz), np.inf, dtype=np.float32)
+                costs[1:-1] = cost
+                costs[face] = 0
+                distance, _ = MCP_Geometric(
+                    costs, fully_connected=False, sampling=sampling
+                ).find_costs([(face, 0, 0)])
+                return distance[1:-1]
+
+            top_distance = distance_from_face(0)
+            bottom_distance = distance_from_face(-1)
+            coordinate = np.zeros_like(top_distance)
+            np.divide(
+                top_distance,
+                top_distance + bottom_distance,
+                out=coordinate,
+                where=connected,
+            )
+            field_np[batch] = self.top_bc + (self.bot_bc - self.top_bc) * coordinate
+            field_np[batch, ~connected] = 0
+
+        field = torch.as_tensor(field_np, dtype=self.precision, device=self.device)
+        return self._pad(field, [2*self.top_bc, 2*self.bot_bc])
 
     def compute_metrics(self):
         vertical_flux = self.vertical_flux()
@@ -113,6 +207,8 @@ class Solver(ThroughTransportSolver):
             ``(top_bc, bot_bc)``. Defaults to ``(-0.5, 0.5)``.
         D_0 (float, optional): Reference (mean) diffusivity. Defaults to ``1``.
         device (str | torch.device, optional): Compute device. Defaults to ``'cuda'``.
+        init_method (str, optional): Initial field method: ``'linear'``,
+            ``'slice_resistance'``, or ``'geodesic_resistance'``.
 
     Attributes:
         D_0 (float): Reference diffusivity.
@@ -124,10 +220,10 @@ class Solver(ThroughTransportSolver):
         ValueError: If labels are not strictly in ``{0, 1}``.
     """
 
-    def __init__(self, img, omega=None, D_0=1, device='cuda'):
+    def __init__(self, img, omega=None, D_0=1, device='cuda', init_method='linear'):
         self._check_binary_labels(img)
         self.conductive_labels = [1]
-        super().__init__(img, omega=omega, device=device)
+        super().__init__(img, omega=omega, device=device, init_method=init_method)
         self.D_0 = D_0
         self.D_mean = np.mean(self.vol_x, axis=1)
 
@@ -179,6 +275,8 @@ class AnisotropicSolver(Solver):
             Defaults to ``(-0.5, 0.5)``.
         D_0 (float, optional): Reference diffusivity. Defaults to ``1``.
         device (str | torch.device, optional): Compute device. Defaults to ``'cuda'``.
+        init_method (str, optional): Initial field method inherited from
+            :class:`ThroughTransportSolver`.
 
     Attributes:
         Ky (float): Anisotropy weight for Y neighbors (``(dx/dy)^2``).
@@ -189,7 +287,7 @@ class AnisotropicSolver(Solver):
         UserWarning: If spacing anisotropy is very large.
     """
 
-    def __init__(self, img, spacing, omega=None, D_0=1, device='cuda:0'):
+    def __init__(self, img, spacing, omega=None, D_0=1, device='cuda:0', init_method='linear'):
         if not isinstance(spacing, (list, tuple)) or len(spacing) != 3:
             raise ValueError("spacing must be a list or tuple with three elements (dx, dy, dz)")
         if not all(isinstance(x, (int, float)) for x in spacing):
@@ -199,7 +297,7 @@ class AnisotropicSolver(Solver):
         dx, dy, dz = spacing
         self.Ky = (dx/dy)**2
         self.Kz = (dx/dz)**2
-        super().__init__(img, omega=omega, D_0=D_0, device=device)
+        super().__init__(img, omega=omega, D_0=D_0, device=device, init_method=init_method)
 
     def init_conductive_neighbours(self, img, mask):
         """Saves the number of conductive neighbours for flux calculation"""
@@ -267,6 +365,8 @@ class MultiPhaseSolver(ThroughTransportSolver):
             Labels not provided are assumed isolating.
             Defaults to ``{1: 1}``.
         device (str | torch.device, optional): Compute device. Defaults to ``'cuda'``.
+        init_method (str, optional): Initial field method inherited from
+            :class:`ThroughTransportSolver`.
 
     Attributes:
         diffusivities (dict[int, float]): Internal map of label to diffusivity.
@@ -280,7 +380,8 @@ class MultiPhaseSolver(ThroughTransportSolver):
         ValueError: If any diffusivity is negative or non-finite.
     """
 
-    def __init__(self, img, diffusivities=None, D_scaling=1, omega=None, device='cuda'):
+    def __init__(self, img, diffusivities=None, D_scaling=1, omega=None, device='cuda',
+                 init_method='linear'):
         # Validate diffusivities
         if diffusivities is None:
             diffusivities = {0: 0, 1: 1}
@@ -308,7 +409,7 @@ class MultiPhaseSolver(ThroughTransportSolver):
         self.conductive_labels = [lbl for lbl, D_p in self.Ds.items() if D_p > 0]
 
         # Boundary conditions
-        super().__init__(img, omega=omega, device=device)
+        super().__init__(img, omega=omega, device=device, init_method=init_method)
         self.VF = {
             int(p): np.mean(self.cpu_img == p, axis=(1, 2, 3))
             for p in np.unique(self.cpu_img)

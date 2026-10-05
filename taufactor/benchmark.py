@@ -135,6 +135,7 @@ def run_benchmark_case(
     structure: str | Callable = "fcc",
     features: int | None = None,
     iter_limit: int = 10000,
+    init_method: str = 'linear',
     solver: str | type | None = None,
     solver_kwargs: dict | None = None,
     solve_kwargs: dict | None = None,
@@ -162,7 +163,7 @@ def run_benchmark_case(
     start_time = time.perf_counter()
 
     with redirect_stdout(io.StringIO()):
-        solver = solver_cls(cube, device=device, **solver_kwargs)
+        solver = solver_cls(cube, device=device, init_method=init_method, **solver_kwargs)
         if device == "cuda":
             torch.cuda.synchronize()
             torch_init_max = torch.cuda.max_memory_allocated() / 1e6
@@ -211,6 +212,7 @@ def run_benchmark_study(
     outfile: str = DEFAULT_OUTFILE,
     write_file: bool = True,
     iter_limit: int = 10000,
+    init_method: str = 'linear',
     solver: str | type | None = None,
     solver_kwargs: dict | None = None,
     solve_kwargs: dict | None = None,
@@ -240,6 +242,7 @@ def run_benchmark_study(
             structure=structure,
             features=features,
             iter_limit=iter_limit,
+            init_method=init_method,
             solver=solver,
             solver_kwargs=solver_kwargs,
             solve_kwargs=solve_kwargs,
